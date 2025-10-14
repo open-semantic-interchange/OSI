@@ -26,9 +26,22 @@ semantic_model:
     ai_context: string (optional) # Additional context for AI tools like custom prompts
     extension: string (optional) # Vendor specific attributes
 ```
+
 ### Logical Dataset
+Logical dataset represent business entities. They are the fact and dimension tables in the semantic model. Metrics, dimensions, facts and filters are defined within the scope of a logical dataset. 
+```yaml
+tables:
+  - name: string (required)
+    base_table: string ( required) 
+    unique_keys: array # Unique keys on this logical dataset
+    description: string (optional)
+    ai_context: string (optional) # Additional context for AI tools like synonyms
+    extension: string (optional) # Vendor specific attributes 
 
 ### Relationships
+Relationships define how the logical datasets are connected. 
+
+TBD
 
 ### Dimensions
 Dimensions represent the categorical aspects of data that can be used for grouping and filtering.
@@ -48,6 +61,17 @@ Metrics are quantitative measures defined on business data, representing key cal
 metrics:
   - name: string (required)
     expr: string (required) # SQL expression, must be an aggregate
+    description: string (optional)
+    ai_context: string (optional) # Additional context for AI tools like synonyms
+    extension: string (optional) # Vendor specific attributes
+
+### Facts
+Facts are quantitative scalar measures. The key difference between metrics and facts is that metrics are aggregate expreressions whereas facts are scalar expressions.
+
+```yaml
+facts:
+  - name: string (required)
+    expr: string (required) # SQL expression, must be a scalar expression
     description: string (optional)
     ai_context: string (optional) # Additional context for AI tools like synonyms
     extension: string (optional) # Vendor specific attributes
