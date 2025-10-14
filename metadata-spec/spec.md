@@ -6,7 +6,7 @@
 3. [Core Concepts](#core-concepts)
 
 ## Overview
-This is the specification for Open Semantic Interchange (OSI).
+This is the specification for [Open Semantic Interchange (OSI)](https://www.snowflake.com/en/blog/open-semantic-interchange-ai-standard/).
 
 ## Goals
 1. **Standardization**: Establish a uniform language and structure for semantic model definitions, ensuring consistency and ease of interpretation across various tools and systems
@@ -16,13 +16,13 @@ This is the specification for Open Semantic Interchange (OSI).
 
 ## Core Concepts
 ### Semantic Model
-A semantic model is an representation of business data that organizes it into logical tables and defines relationships between them. Logical tables represent business entities or concepts. The complete spec for semantic model is below:
+A semantic model is a representation of business data that organizes it into logical tables and defines relationships between them. Logical tables represent business entities or concepts. The complete spec for semantic model is below:
 ```yaml
 semantic_model:
   - name: string (required)
     description: string (optional)
-    logical_datasets: # See more information in [Logical Dataset](#logical-dataset)
-    relationships: # See more information in [Relationship](#relationships)
+    logical_datasets: # See more information in [Logical Dataset]
+    relationships: # See more information in [Relationship]
     ai_context: string (optional) # Additional context for AI tools like custom prompts
     extension: string (optional) # Vendor specific attributes
 ```
