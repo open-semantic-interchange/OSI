@@ -37,6 +37,7 @@ tables:
     description: string (optional)
     ai_context: string (optional) # Additional context for AI tools like synonyms
     extension: string (optional) # Vendor specific attributes 
+```
 
 ### Relationships
 Relationships define how the logical datasets are connected. 
