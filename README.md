@@ -6,4 +6,4 @@ The OSI initiative is a collaborative, open-source effort dedicated to standardi
 
 All code in this repository is licensed under the Apache 2.0 license.
 
-The  product documentation is licensed under a CC-BY license.
+The specification and documentation is licensed under the Creative Commons Attribution license (CC BY).
