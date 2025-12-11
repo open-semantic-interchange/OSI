@@ -415,8 +415,20 @@ semantic_model:
             - "revenue per employee"
 
     custom_extensions:
-      - vendor_name: SNOWFLAKE
-        data: '{"warehouse": "TPCDS_WH", "database": "TPCDS", "schema": "PUBLIC"}'
+      - vendor_name: SALESFORCE
+        data: '{
+          "tableau_workbook_id": "tpcds_retail_dashboard",
+          "einstein_enabled": true,
+          "crm_sync": {
+            "enabled": true,
+            "sync_frequency": "daily",
+            "customer_mapping": "customer.c_customer_id -> Account.AccountNumber"
+          },
+          "tableau_semantics": {
+            "published": true,
+            "version": "1.0"
+          }
+        }'
 
       - vendor_name: DBT
         data: '{"project_name": "tpcds_analytics", "models_path": "models/semantic"}'
