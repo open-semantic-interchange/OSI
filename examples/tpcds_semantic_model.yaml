@@ -434,7 +434,7 @@ semantic_model:
     metrics:
       - name: customer_lifetime_value
         expr:
-          - dialect: ANSI SQL
+          - dialect: ANSI_SQL
             expression: SUM(store_sales.ss_ext_sales_price) / COUNT(DISTINCT customer.c_customer_sk)
         description: Average lifetime sales value per customer
         ai_context:
@@ -448,7 +448,7 @@ semantic_model:
 
       - name: sales_by_brand
         expr:
-          - dialect: ANSI SQL
+          - dialect: ANSI_SQL
             expression: SUM(store_sales.ss_ext_sales_price)
         description: Total sales grouped by brand (requires grouping by item.i_brand)
         ai_context:
@@ -460,7 +460,7 @@ semantic_model:
 
       - name: year_over_year_growth
         expr:
-          - dialect: ANSI SQL
+          - dialect: ANSI_SQL
             expression: |
               (SUM(CASE WHEN date_dim.d_year = YEAR(CURRENT_DATE) THEN store_sales.ss_ext_sales_price ELSE 0 END) -
                SUM(CASE WHEN date_dim.d_year = YEAR(CURRENT_DATE) - 1 THEN store_sales.ss_ext_sales_price ELSE 0 END)) /
@@ -476,7 +476,7 @@ semantic_model:
 
       - name: store_sales_per_employee
         expr:
-          - dialect: ANSI SQL
+          - dialect: ANSI_SQL
             expression: SUM(store_sales.ss_ext_sales_price) / NULLIF(SUM(store.s_number_employees), 0)
         description: Sales per employee across stores
         ai_context:
@@ -488,7 +488,7 @@ semantic_model:
 
       - name: top_selling_categories
         expr:
-          - dialect: ANSI SQL
+          - dialect: ANSI_SQL
             expression: SUM(store_sales.ss_ext_sales_price)
         description: Total sales by product category (requires grouping by item.i_category)
         ai_context:
@@ -499,9 +499,9 @@ semantic_model:
             - "sales by category"
 
     custom_extensions:
-      - vendor_name: snowflake
-        data: '{"warehouse": "TPCDS_WH", "database": "TPCDS", "schema": "PUBLIC"}'
+      - vendor_name: SNOWFLAKE
+        data: '{"custom_instructions": "TPCDS model", "question_categorization": "TPCDS"}'
 
-      - vendor_name: dbt
+      - vendor_name: DBT
         data: '{"project_name": "tpcds_analytics", "models_path": "models/semantic"}'
-
+      
