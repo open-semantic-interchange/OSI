@@ -8,13 +8,13 @@ semantic_model:
     ai_context:
       prompt: "Use this semantic model for retail analytics. It provides comprehensive sales, customer, product, and store data from the TPC-DS benchmark. The model supports time-based analysis, customer segmentation, product performance, and store operations metrics."
 
-    logical_datasets:
+    datasets:
       # Fact table: Store sales transactions
       - name: store_sales
-        base_table: tpcds.public.store_sales
+        source: tpcds.public.store_sales
+        primary_key: [ss_item_sk, ss_ticket_number]  # Composite primary key
         unique_keys:
-          - ss_item_sk
-          - ss_ticket_number
+          - [ss_item_sk, ss_ticket_number]  # Composite key: item + ticket number uniquely identifies a line item
         description: Fact table containing all store sales transactions
         ai_context:
           synonyms:
@@ -22,127 +22,111 @@ semantic_model:
             - "store purchases"
             - "retail sales"
             - "POS data"
-            - "point of sale"
 
         fields:
           - name: ss_sold_date_sk
-            expr: ss_sold_date_sk
+            expression: ss_sold_date_sk
             description: Foreign key to date dimension
             ai_context:
               synonyms:
                 - "sale date"
                 - "transaction date"
-                - "purchase date"
 
           - name: ss_item_sk
-            expr: ss_item_sk
+            expression: ss_item_sk
             description: Foreign key to item dimension
             ai_context:
               synonyms:
                 - "product"
                 - "item"
-                - "SKU"
-                - "product key"
 
           - name: ss_customer_sk
-            expr: ss_customer_sk
+            expression: ss_customer_sk
             description: Foreign key to customer dimension
             ai_context:
               synonyms:
                 - "customer"
                 - "buyer"
-                - "purchaser"
 
           - name: ss_store_sk
-            expr: ss_store_sk
+            expression: ss_store_sk
             description: Foreign key to store dimension
             ai_context:
               synonyms:
-                - "store location"
-                - "retail location"
                 - "store"
+                - "location"
 
           - name: ss_quantity
-            expr: ss_quantity
+            expression: ss_quantity
             description: Quantity of items sold
             ai_context:
               synonyms:
                 - "units sold"
-                - "quantity purchased"
-                - "item count"
-                - "units"
+                - "quantity"
 
           - name: ss_sales_price
-            expr: ss_sales_price
+            expression: ss_sales_price
             description: Sales price per unit
             ai_context:
               synonyms:
                 - "unit price"
-                - "price per item"
-                - "item price"
+                - "price"
 
           - name: ss_ext_sales_price
-            expr: ss_ext_sales_price
+            expression: ss_ext_sales_price
             description: Extended sales price (quantity * price)
             ai_context:
               synonyms:
                 - "total price"
-                - "line item total"
-                - "extended price"
-                - "total amount"
+                - "line total"
 
           - name: ss_net_profit
-            expr: ss_net_profit
+            expression: ss_net_profit
             description: Net profit from the sale
             ai_context:
               synonyms:
                 - "profit"
                 - "margin"
-                - "earnings"
-                - "net earnings"
 
       # Dimension table: Date
       - name: date_dim
-        base_table: tpcds.public.date_dim
+        source: tpcds.public.date_dim
+        primary_key: [d_date_sk]  # Simple primary key
         unique_keys:
-          - d_date_sk
+          - [d_date_sk]  # Simple key: single column
         description: Date dimension with calendar attributes
         ai_context:
           synonyms:
             - "calendar"
             - "dates"
             - "time periods"
-            - "date table"
 
         fields:
           - name: d_date_sk
-            expr: d_date_sk
+            expression: d_date_sk
             description: Surrogate key for date
-            dimension:
-              is_time: true
 
           - name: d_date
-            expr: d_date
+            expression: d_date
             description: Actual date value
             dimension:
               is_time: true
             ai_context:
               synonyms:
-                - "calendar date"
                 - "date"
+                - "calendar date"
 
           - name: d_year
-            expr: d_year
+            expression: d_year
             description: Year
             dimension:
               is_time: true
             ai_context:
               synonyms:
                 - "year"
-                - "calendar year"
 
           - name: d_quarter_name
-            expr: d_quarter_name
+            expression: d_quarter_name
             description: Quarter name (e.g., 2024Q1)
             dimension:
               is_time: true
@@ -150,248 +134,190 @@ semantic_model:
               synonyms:
                 - "quarter"
                 - "fiscal quarter"
-                - "Q1, Q2, Q3, Q4"
 
           - name: d_month_name
-            expr: d_month_name
+            expression: d_month_name
             description: Month name
             dimension:
               is_time: true
             ai_context:
               synonyms:
                 - "month"
-                - "calendar month"
-
-          - name: d_day_name
-            expr: d_day_name
-            description: Day of week name
-            dimension:
-              is_time: true
-            ai_context:
-              synonyms:
-                - "weekday"
-                - "day of week"
-                - "day name"
 
       # Dimension table: Customer
       - name: customer
-        base_table: tpcds.public.customer
+        source: tpcds.public.customer
+        primary_key: [c_customer_sk]  # Simple primary key
         unique_keys:
-          - c_customer_sk
+          - [c_customer_sk]  # Simple key: single column
         description: Customer dimension with demographic information
         ai_context:
           synonyms:
             - "customers"
             - "shoppers"
             - "buyers"
-            - "consumer demographics"
-            - "purchasers"
 
         fields:
           - name: c_customer_sk
-            expr: c_customer_sk
+            expression: c_customer_sk
             description: Surrogate key for customer
 
           - name: c_customer_id
-            expr: c_customer_id
+            expression: c_customer_id
             description: Business key for customer
             ai_context:
               synonyms:
                 - "customer ID"
                 - "customer number"
-                - "customer identifier"
 
           - name: c_first_name
-            expr: c_first_name
+            expression: c_first_name
             description: Customer first name
 
           - name: c_last_name
-            expr: c_last_name
+            expression: c_last_name
             description: Customer last name
 
-          - name: c_birth_year
-            expr: c_birth_year
-            description: Customer birth year
-            ai_context:
-              synonyms:
-                - "age"
-                - "birth year"
-                - "year of birth"
-
-          - name: c_email_address
-            expr: c_email_address
-            description: Customer email address
-            ai_context:
-              synonyms:
-                - "email"
-                - "contact"
-                - "email address"
-
           - name: customer_full_name
-            expr: c_first_name || ' ' || c_last_name
+            expression: c_first_name || ' ' || c_last_name
             description: Customer full name (computed field)
             ai_context:
               synonyms:
                 - "full name"
                 - "customer name"
-                - "name"
+
+          - name: c_email_address
+            expression: c_email_address
+            description: Customer email address
+            ai_context:
+              synonyms:
+                - "email"
+                - "contact"
 
       # Dimension table: Item (Product)
       - name: item
-        base_table: tpcds.public.item
+        source: tpcds.public.item
+        primary_key: [i_item_sk]  # Simple primary key
         unique_keys:
-          - i_item_sk
+          - [i_item_sk]  # Simple key: single column
         description: Item/Product dimension with product attributes
         ai_context:
           synonyms:
             - "products"
             - "items"
             - "merchandise"
-            - "SKUs"
-            - "inventory"
-            - "catalog"
 
         fields:
           - name: i_item_sk
-            expr: i_item_sk
+            expression: i_item_sk
             description: Surrogate key for item
 
           - name: i_item_id
-            expr: i_item_id
+            expression: i_item_id
             description: Business key for item
             ai_context:
               synonyms:
                 - "item ID"
                 - "product ID"
                 - "SKU"
-                - "product code"
 
           - name: i_item_desc
-            expr: i_item_desc
+            expression: i_item_desc
             description: Item description
             ai_context:
               synonyms:
                 - "product description"
                 - "item name"
-                - "product name"
 
           - name: i_brand
-            expr: i_brand
+            expression: i_brand
             description: Brand name
             ai_context:
               synonyms:
                 - "brand"
                 - "manufacturer"
-                - "brand name"
 
           - name: i_category
-            expr: i_category
+            expression: i_category
             description: Item category
             ai_context:
               synonyms:
                 - "product category"
                 - "department"
-                - "category"
-
-          - name: i_class
-            expr: i_class
-            description: Item class
-            ai_context:
-              synonyms:
-                - "product class"
-                - "product type"
-                - "class"
 
           - name: i_current_price
-            expr: i_current_price
+            expression: i_current_price
             description: Current price of the item
             ai_context:
               synonyms:
                 - "price"
-                - "MSRP"
                 - "list price"
-                - "current price"
 
       # Dimension table: Store
       - name: store
-        base_table: tpcds.public.store
+        source: tpcds.public.store
+        primary_key: [s_store_sk]  # Simple primary key
         unique_keys:
-          - s_store_sk
+          - [s_store_sk]  # Simple key: single column
         description: Store dimension with location and store attributes
         ai_context:
           synonyms:
             - "stores"
             - "retail locations"
-            - "outlets"
             - "branches"
-            - "locations"
 
         fields:
           - name: s_store_sk
-            expr: s_store_sk
+            expression: s_store_sk
             description: Surrogate key for store
 
           - name: s_store_id
-            expr: s_store_id
+            expression: s_store_id
             description: Business key for store
             ai_context:
               synonyms:
                 - "store ID"
                 - "store number"
-                - "location ID"
 
           - name: s_store_name
-            expr: s_store_name
+            expression: s_store_name
             description: Store name
             ai_context:
               synonyms:
                 - "store name"
                 - "location name"
-                - "branch name"
-
-          - name: s_number_employees
-            expr: s_number_employees
-            description: Number of employees at the store
-            ai_context:
-              synonyms:
-                - "employee count"
-                - "staff size"
-                - "number of employees"
 
           - name: s_city
-            expr: s_city
+            expression: s_city
             description: City where store is located
             ai_context:
               synonyms:
                 - "city"
                 - "location"
-                - "store city"
 
           - name: s_state
-            expr: s_state
+            expression: s_state
             description: State where store is located
             ai_context:
               synonyms:
                 - "state"
                 - "region"
-                - "province"
 
-          - name: s_zip
-            expr: s_zip
-            description: ZIP code of store location
+          - name: s_number_employees
+            expression: s_number_employees
+            description: Number of employees at the store
             ai_context:
               synonyms:
-                - "zip code"
-                - "postal code"
-                - "ZIP"
+                - "employee count"
+                - "staff size"
 
-    # Relationships between logical datasets
+    # Relationships between datasets
     relationships:
       - name: store_sales_to_date
         from: store_sales
         to: date_dim
-        from_column: ss_sold_date_sk
-        to_column: d_date_sk
+        from_columns: [ss_sold_date_sk]
+        to_columns: [d_date_sk]
         ai_context:
           synonyms:
             - "sales date relationship"
@@ -400,40 +326,61 @@ semantic_model:
       - name: store_sales_to_customer
         from: store_sales
         to: customer
-        from_column: ss_customer_sk
-        to_column: c_customer_sk
+        from_columns: [ss_customer_sk]
+        to_columns: [c_customer_sk]
         ai_context:
           synonyms:
             - "customer purchase relationship"
             - "who bought"
-            - "purchaser relationship"
 
       - name: store_sales_to_item
         from: store_sales
         to: item
-        from_column: ss_item_sk
-        to_column: i_item_sk
+        from_columns: [ss_item_sk]
+        to_columns: [i_item_sk]
         ai_context:
           synonyms:
             - "product sold relationship"
             - "what was sold"
-            - "item purchase relationship"
 
       - name: store_sales_to_store
         from: store_sales
         to: store
-        from_column: ss_store_sk
-        to_column: s_store_sk
+        from_columns: [ss_store_sk]
+        to_columns: [s_store_sk]
         ai_context:
           synonyms:
             - "store location relationship"
             - "where sale occurred"
-            - "sales location relationship"
 
     # Semantic model-level metrics spanning multiple datasets
     metrics:
+      - name: total_sales
+        expression:
+          - dialect: ANSI_SQL
+            aggregation_type: SUM
+            input_expr: store_sales.ss_ext_sales_price
+        description: Total sales revenue across all transactions
+        ai_context:
+          synonyms:
+            - "total revenue"
+            - "gross sales"
+            - "sales amount"
+
+      - name: total_profit
+        expression:
+          - dialect: ANSI_SQL
+            aggregation_type: SUM
+            input_expr: store_sales.ss_net_profit
+        description: Total net profit from store sales
+        ai_context:
+          synonyms:
+            - "net profit"
+            - "total earnings"
+            - "profit"
+
       - name: customer_lifetime_value
-        expr:
+        expression:
           - dialect: ANSI_SQL
             expression: SUM(store_sales.ss_ext_sales_price) / COUNT(DISTINCT customer.c_customer_sk)
         description: Average lifetime sales value per customer
@@ -443,65 +390,33 @@ semantic_model:
             - "LTV"
             - "customer value"
             - "lifetime revenue"
-            - "customer worth"
-            - "average customer value"
 
       - name: sales_by_brand
-        expr:
+        expression:
           - dialect: ANSI_SQL
-            expression: SUM(store_sales.ss_ext_sales_price)
-        description: Total sales grouped by brand (requires grouping by item.i_brand)
+            aggregation_type: SUM
+            input_expr: store_sales.ss_ext_sales_price
+        description: Total sales by brand (requires grouping by item.i_brand)
         ai_context:
           synonyms:
             - "brand sales"
             - "brand performance"
             - "brand revenue"
-            - "sales per brand"
 
-      - name: year_over_year_growth
-        expr:
-          - dialect: ANSI_SQL
-            expression: |
-              (SUM(CASE WHEN date_dim.d_year = YEAR(CURRENT_DATE) THEN store_sales.ss_ext_sales_price ELSE 0 END) -
-               SUM(CASE WHEN date_dim.d_year = YEAR(CURRENT_DATE) - 1 THEN store_sales.ss_ext_sales_price ELSE 0 END)) /
-               NULLIF(SUM(CASE WHEN date_dim.d_year = YEAR(CURRENT_DATE) - 1 THEN store_sales.ss_ext_sales_price ELSE 0 END), 0) * 100
-        description: Year-over-year sales growth percentage
-        ai_context:
-          synonyms:
-            - "YoY growth"
-            - "year over year"
-            - "annual growth"
-            - "sales growth"
-            - "yearly growth"
-
-      - name: store_sales_per_employee
-        expr:
+      - name: store_productivity
+        expression:
           - dialect: ANSI_SQL
             expression: SUM(store_sales.ss_ext_sales_price) / NULLIF(SUM(store.s_number_employees), 0)
         description: Sales per employee across stores
         ai_context:
           synonyms:
+            - "sales per employee"
             - "employee productivity"
-            - "sales per staff"
-            - "efficiency metric"
             - "revenue per employee"
-
-      - name: top_selling_categories
-        expr:
-          - dialect: ANSI_SQL
-            expression: SUM(store_sales.ss_ext_sales_price)
-        description: Total sales by product category (requires grouping by item.i_category)
-        ai_context:
-          synonyms:
-            - "category sales"
-            - "category performance"
-            - "department sales"
-            - "sales by category"
 
     custom_extensions:
       - vendor_name: SNOWFLAKE
-        data: '{"custom_instructions": "TPCDS model", "question_categorization": "TPCDS"}'
+        data: '{"warehouse": "TPCDS_WH", "database": "TPCDS", "schema": "PUBLIC"}'
 
       - vendor_name: DBT
         data: '{"project_name": "tpcds_analytics", "models_path": "models/semantic"}'
-      
