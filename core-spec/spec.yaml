@@ -1,0 +1,227 @@
+# OSI - Core Metadata Spec (YAML Schema)
+# Version: 1.0
+# 
+# Goals:
+# - Standardization: Establish uniform language and structure for semantic model definitions
+# - Extensibility: Support domain-specific extensions while maintaining core compatibility
+# - Interoperability: Enable exchange and reuse across different AI and BI applications
+
+---
+# Enumerations
+# Standard enums used throughout the specification
+
+# Supported SQL and expression language dialects
+dialects:
+  - "ANSI SQL"              # Standard SQL dialect
+  - "Snowflake SQL"         # Snowflake
+  - "MDX"                   # Multi-Dimensional Expressions
+  - "Tableau"               # Tableau
+  - "BigQuery SQL"          # Google BigQuery
+  - "Redshift SQL"          # Amazon Redshift
+  - "Databricks SQL"        # Databricks
+  - "Azure Synapse SQL"     # Azure Synapse
+  - "PostgreSQL"            # PostgreSQL
+  - "MySQL"                 # MySQL
+  - "Oracle SQL"            # Oracle
+  - "SQL Server"            # Microsoft SQL Server
+
+
+
+# Supported vendors for custom extensions
+vendors:
+  - "common"
+  - "snowflake"
+  - "tableau"
+  - "dbt"
+
+
+# Standard aggregation types for structured metrics
+aggregation_types:
+  # Basic aggregations
+  - "SUM"
+  - "AVG"
+  - "COUNT"
+  - "COUNT_DISTINCT"
+  - "MIN"
+  - "MAX"
+  
+ 
+# Top-level semantic model definition
+semantic_model:
+  # Required: Unique identifier for the semantic model
+  - name: string
+
+    # Optional: Human-readable description of the semantic model
+    description: string
+
+    # Optional: Additional context for AI tools (e.g., custom prompts, instructions)
+    ai_context: string
+
+    # Required: Collection of logical datasets(fact and dimension tables)
+    # See Logical Dataset section below for detailed structure
+    logical_datasets:
+      - name: string
+        base_table: string
+        primary_key: string
+        unique_keys: []
+        description: string
+        fields: []
+        ai_context: {
+          string: string
+        }
+        custom_extensions: {}
+
+    # Required: Defines how logical datasets or semantic models are connected
+    # Represents foreign key relationships between datasets
+    relationships:
+      - name: string
+        from: string
+        to: string
+        from_column: string
+        to_column: string
+        custom_extensions: {}
+
+    # Optional:  metrics
+    # These metrics can span one or more  logical datasets and use relationships
+    # See Metrics section below for detailed structure
+    metrics:
+      - name: string
+        expr: []
+        description: string
+        ai_context: string
+        custom_extensions:
+          - vendor_name: string
+            data: string
+
+    # Optional: Vendor-specific attributes for extensibility
+    # Allows vendors to add custom metadata without breaking core compatibility
+    custom_extensions:
+      - vendor_name: string  # Must be one of the values from 'vendors' enum above
+        data: string
+
+---
+# Logical Dataset Schema
+# Represents business entities or concepts (fact and dimension tables)
+# Fields are defined within the scope of a logical dataset
+datasets:
+  # Required: Unique identifier for the logical dataset
+  - name: string
+
+    # Required: Reference to the underlying physical table or view
+    # Format should include database.schema.table or similar qualified name
+    base_table: string
+
+    # Optional: Array of column names that uniquely identify rows in this dataset
+    # Used for join optimization and data integrity validation
+    unique_keys:
+      - string
+
+    # Optional: Human-readable description of the logical dataset
+    description: string
+
+    # Optional: Additional context for AI tools (e.g., synonyms, common terms)
+    # Helps LLMs understand the business meaning and generate better queries
+    ai_context: string
+
+    # Optional: Row-level calculations for grouping, filtering, and metric expressions
+    # See Fields section below for detailed structure
+    fields: []
+
+    # Optional: Vendor-specific attributes for extensibility
+    custom_extensions:
+      - vendor_name: string  # Must be one of the values from 'vendors' enum above
+        data: string
+
+---
+# Relationship Schema
+# Defines how logical datasets or semantic models are connected
+# Represents foreign key relationships (many-to-one or one-to-one)
+relationships:
+  # Required: Unique identifier for the relationship
+  - name: string
+
+    # Required: The logical dataset on the many side of the relationship
+    # References a logical dataset name
+    from: string
+
+    # Required: The logical dataset on the one side of the relationship
+    # References a logical dataset name
+    to: string
+
+    # Required: Column name in the "from" dataset (foreign key)
+    from_column: string
+
+    # Required: Column name in the "to" dataset (primary key)
+    to_column: string
+
+    # Optional: Vendor-specific attributes for extensibility
+    custom_extensions:
+      - vendor_name: string  # Must be one of the values from 'vendors' enum above
+        data: string
+
+---
+# Fields Schema
+# Represents row-level attributes that can be used for grouping, filtering, and metric expressions
+fields:
+  # Required: Unique identifier for the field within the logical dataset
+  - name: string
+
+    # Required: SQL expression that defines how to compute this field
+    # Can be a simple column reference or a complex expression
+    expr: string
+
+    # Optional: Dimension metadata
+    # Indicates this field can be used as a dimension for grouping/filtering
+    dimension:
+      # Optional: Indicates if this is a time-based dimension
+      # Used for time-series analysis and temporal filtering
+      is_time: boolean
+
+    # Optional: Label for categorization (e.g., "filter")
+    label: string
+
+    # Optional: Human-readable description of the field
+    description: string
+
+    # Optional: Additional context for AI tools (e.g., synonyms, business terms)
+    # Helps LLMs understand the field meaning and generate better queries
+    ai_context: string
+
+     # Optional: Vendor-specific attributes for extensibility
+    custom_extensions:
+      - vendor_name: string  # Must be one of the values from 'vendors' enum above
+        data: string
+
+---
+# Metrics Schema
+# Quantitative measures defined on business data
+# Represents key calculations like sums, averages, ratios, etc.
+metrics:
+  # Required: Unique identifier for the metric within the logical dataset
+  - name: string
+
+    # Required: Expression definition with dialect support
+    # Supports multiple SQL dialects for cross-platform compatibility
+    expr:
+      # Option 1: Full expression with dialect specification
+      - dialect: string  # Must be one of the values from 'dialects' enum above, Default: "ANSI SQL"
+        expression: string  # e.g., "SUM(sales)", "AVG(revenue)"
+
+      # Option 2: Structured aggregation (for simple metrics)
+      # This provides a more standardized way to represent common aggregations
+      - dialect: string  # Must be one of the values from 'dialects' enum above
+        aggregation_type: string  # Must be one of the values from 'aggregation_types' enum above
+        input_expr: string  # e.g., "sales", "revenue", "quantity"
+
+    # Optional: Human-readable description of the metric
+    # Should explain what the metric measures and how it's used
+    description: string
+
+    # Optional: Additional context for AI tools (e.g., synonyms, business context)
+    # Helps LLMs understand the metric meaning and suggest it appropriately
+    ai_context: string
+
+     # Optional: Vendor-specific attributes for extensibility
+    custom_extensions:
+      - vendor_name: string  # Must be one of the values from 'vendors' enum above
+        data: string
