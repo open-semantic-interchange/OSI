@@ -47,7 +47,7 @@ semantic_model:
     relationships:[]
 
     # Optional: 
-    # These metrics can span one or more  logical datasets and use relationships
+    # These metrics can span one or more logical datasets and use relationships
     # See Metrics section below for detailed structure
     metrics: []
 
