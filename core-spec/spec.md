@@ -229,7 +229,7 @@ expression:
 
 ### Examples
 
-**Simple Column Reference:**
+**Simple Column Reference for a Dimension:**
 
 ```yaml
 - name: customer_id
