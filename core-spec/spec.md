@@ -34,6 +34,7 @@ Supported SQL and expression language dialects for metrics and field definitions
 | `SNOWFLAKE` | Snowflake SQL |
 | `MDX` | Multi-Dimensional Expressions |
 | `TABLEAU` | Tableau calculations |
+| `DATABRICKS` | Databricks SQL |
 
 ### Vendors
 
@@ -45,6 +46,7 @@ Supported vendors for custom extensions and integrations.
 | `SNOWFLAKE` | Snowflake-specific attributes |
 | `SALESFORCE` | Salesforce/Tableau-specific attributes |
 | `DBT` | dbt-specific attributes |
+| `DATABRICKS` | Databricks-specific attributes |
 
 ## Semantic Model
 
@@ -393,6 +395,16 @@ custom_extensions:
     "project_name": "analytics",
     "materialized": "table",
     "tags": ["daily", "core"]
+  }'
+```
+
+**Databricks Extension:**
+
+```yaml
+- vendor_name: Databricks
+  data: '{
+    "default_catalog": "finance",
+    "default_schema": "gold"
   }'
 ```
 
