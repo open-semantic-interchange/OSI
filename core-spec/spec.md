@@ -1,6 +1,7 @@
 # OSI - Core Metadata Specification
 
 **Version:** 1.1
+**Status:** DRAFT
 
 ## Goals
 
