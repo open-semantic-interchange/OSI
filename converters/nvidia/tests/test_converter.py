@@ -47,7 +47,7 @@ from ossie_nvidia_gsf.native_converter import (
 OSSIE_VERSION = "0.2.0.dev0"
 FIXTURES = Path(__file__).parent / "fixtures"
 VALIDATOR = Path(__file__).resolve().parents[3] / "validation" / "validate.py"
-SCHEMA = Path(__file__).resolve().parents[3] / "core-spec" / "osi-schema.json"
+SCHEMA = Path(__file__).resolve().parents[3] / "core-spec" / "ossie-schema.json"
 
 
 def _ossie_yaml() -> str:
