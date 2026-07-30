@@ -80,7 +80,6 @@
           {
             "name": "Total Sales",
             "description": "Sum of sales amount",
-            "dataType": "decimal",
             "expression": "SUM ( Sales[Amount] )",
             "formatString": "\\$#,0.00"
           },

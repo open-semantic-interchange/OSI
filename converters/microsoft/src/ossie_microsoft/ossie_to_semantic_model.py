@@ -379,11 +379,14 @@ def _apply_measures(tables, metrics):
         }
         if metric.get("description"):
             measure["description"] = metric["description"]
-        datatype = (
-            _map_datatype(metric.get("datatype"), scope) if "dataType" not in stash else None
-        )
-        if datatype:
-            measure["dataType"] = datatype
+        if metric.get("datatype") and "dataType" not in stash:
+            # A Power BI measure has no writable data type: the engine infers the result
+            # type from the DAX. Emitting one would be a property the model does not own.
+            warn(
+                scope,
+                f"Power BI infers a measure's data type from its DAX expression, so "
+                f"datatype '{metric['datatype']}' is not applied",
+            )
         for key, value in stash.items():
             if key not in _MEASURE_CONTROL_KEYS:
                 measure.setdefault(key, value)

@@ -65,7 +65,7 @@ _TABLE_CONSUMED = frozenset({"name", "description", "columns", "measures"})
 _COLUMN_CONSUMED = frozenset(
     {"name", "description", "dataType", "sourceColumn", "expression", "isKey", "isUnique"}
 )
-_MEASURE_CONSUMED = frozenset({"name", "description", "dataType", "expression"})
+_MEASURE_CONSUMED = frozenset({"name", "description", "expression"})
 _RELATIONSHIP_CONSUMED = frozenset(
     {
         "name",
@@ -340,6 +340,9 @@ def _convert_metrics(tables):
             metric = {"name": name, "expression": make_expression(expression, DIALECT_DAX)}
             if measure.get("description"):
                 metric["description"] = text(measure["description"])
+            # A measure's result type is inferred from its DAX, so it is reported for
+            # information only and always preserved verbatim in the stash rather than
+            # being reconstructed from the portable type on the way back out.
             datatype = _map_datatype(
                 measure.get("dataType"), measure.get("formatString"), scope
             )
@@ -347,8 +350,6 @@ def _convert_metrics(tables):
                 metric["datatype"] = datatype
 
             stash = _passthrough(measure, _MEASURE_CONSUMED)
-            if not _is_reversible_datatype(measure.get("dataType"), datatype):
-                stash["dataType"] = measure.get("dataType")
             # Apache Ossie metrics are model-level; Power BI measures belong to a table.
             # The home table is recorded so an export can put the measure back.
             stash["table"] = table["name"]

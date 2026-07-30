@@ -561,3 +561,20 @@ def test_both_descriptions_survive():
         )
     assert result["description"] == "document description"
     assert result["model"]["description"] == "model description"
+
+
+def test_a_metric_datatype_is_not_forced_onto_a_measure():
+    # A Power BI measure has no writable data type; the engine infers the result type
+    # from the DAX, so emitting one would claim a property the model does not own.
+    semantic_model = _minimal(
+        metrics=[
+            {
+                "name": "Rows",
+                "datatype": "Integer",
+                "expression": make_expression("COUNTROWS(T)", "DAX"),
+            }
+        ]
+    )
+    with pytest.warns(UserWarning, match="infers a measure's data type"):
+        bim = _convert(semantic_model)
+    assert "dataType" not in _table(bim, "T")["measures"][0]

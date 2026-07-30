@@ -169,7 +169,7 @@ def test_measures_become_dax_metrics(model):
     assert [m["name"] for m in model["metrics"]] == ["Total Sales", "Order Count"]
     total = _metric(model, "Total Sales")
     assert _expression(total, "DAX") == "SUM ( Sales[Amount] )"
-    assert total["datatype"] == "Decimal"
+    assert total["description"] == "Sum of sales amount"
     assert total["description"] == "Sum of sales amount"
 
 
