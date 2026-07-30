@@ -32,6 +32,7 @@ class OSIDialect(str, Enum):
     TABLEAU = "TABLEAU"
     DATABRICKS = "DATABRICKS"
     BIGQUERY = "BIGQUERY"
+    DAX = "DAX"
 
 
 class OSIDataType(str, Enum):
@@ -70,6 +71,7 @@ class OSIVendor(str, Enum):
     GOODDATA = "GOODDATA"
     SEMANTIDO = "SEMANTIDO"
     WISDOM = "WISDOM"
+    POWER_BI = "POWER_BI"
 
 
 class OSIAIContextObject(BaseModel):

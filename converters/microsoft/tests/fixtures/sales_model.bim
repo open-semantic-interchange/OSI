@@ -1,0 +1,225 @@
+{
+  "name": "sales_model",
+  "compatibilityLevel": 1550,
+  "model": {
+    "description": "Retail sales semantic model",
+    "culture": "en-US",
+    "tables": [
+      {
+        "name": "Sales",
+        "description": "Sales fact table",
+        "columns": [
+          {
+            "name": "RowNumber",
+            "type": "rowNumber",
+            "dataType": "int64"
+          },
+          {
+            "name": "SalesKey",
+            "dataType": "int64",
+            "sourceColumn": "sales_key",
+            "isKey": true
+          },
+          {
+            "name": "OrderDate",
+            "dataType": "dateTime",
+            "sourceColumn": "order_date"
+          },
+          {
+            "name": "CustomerKey",
+            "dataType": "int64",
+            "sourceColumn": "customer_key"
+          },
+          {
+            "name": "Amount",
+            "description": "Extended sales amount",
+            "dataType": "decimal",
+            "sourceColumn": "amount"
+          },
+          {
+            "name": "AmountWithTax",
+            "type": "calculated",
+            "dataType": "decimal",
+            "expression": [
+              "Sales[Amount] * 1.2"
+            ]
+          }
+        ],
+        "partitions": [
+          {
+            "name": "Sales",
+            "mode": "import",
+            "source": {
+              "type": "m",
+              "expression": [
+                "let",
+                "    Source = Sql.Database(\"server\", \"retail\"),",
+                "    Data = Source{[Schema=\"dbo\",Item=\"sales\"]}[Data]",
+                "in",
+                "    Data"
+              ]
+            }
+          }
+        ],
+        "measures": [
+          {
+            "name": "Total Sales",
+            "description": "Sum of sales amount",
+            "dataType": "decimal",
+            "expression": "SUM ( Sales[Amount] )",
+            "formatString": "\\$#,0.00"
+          },
+          {
+            "name": "Order Count",
+            "expression": [
+              "COUNTROWS (",
+              "    Sales",
+              ")"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Customer",
+        "columns": [
+          {
+            "name": "CustomerKey",
+            "dataType": "int64",
+            "sourceColumn": "customer_key",
+            "isKey": true
+          },
+          {
+            "name": "Email",
+            "dataType": "string",
+            "sourceColumn": "email",
+            "isUnique": true
+          },
+          {
+            "name": "Country",
+            "dataType": "string",
+            "sourceColumn": "country"
+          }
+        ],
+        "partitions": [
+          {
+            "name": "Customer",
+            "mode": "directQuery",
+            "source": {
+              "type": "entity",
+              "entityName": "customer",
+              "schemaName": "dbo"
+            }
+          }
+        ]
+      },
+      {
+        "name": "Calendar",
+        "dataCategory": "Time",
+        "columns": [
+          {
+            "name": "Date",
+            "dataType": "dateTime",
+            "sourceColumn": "date",
+            "isKey": true
+          },
+          {
+            "name": "FiscalYear",
+            "dataType": "int64",
+            "sourceColumn": "fiscal_year",
+            "dataCategory": "Time"
+          }
+        ],
+        "partitions": [
+          {
+            "name": "Calendar",
+            "source": {
+              "type": "query",
+              "query": "SELECT * FROM dbo.calendar"
+            }
+          }
+        ]
+      },
+      {
+        "name": "LocalDateTable_9f2a1b3c",
+        "columns": [
+          {
+            "name": "Date",
+            "dataType": "dateTime",
+            "sourceColumn": "Date"
+          }
+        ]
+      },
+      {
+        "name": "Internal Staging",
+        "isPrivate": true,
+        "columns": [
+          {
+            "name": "Junk",
+            "dataType": "string",
+            "sourceColumn": "junk"
+          }
+        ]
+      },
+      {
+        "name": "Time Intelligence",
+        "calculationGroup": {
+          "calculationItems": [
+            {
+              "name": "YTD",
+              "expression": "TOTALYTD ( SELECTEDMEASURE (), Calendar[Date] )"
+            }
+          ]
+        },
+        "columns": [
+          {
+            "name": "Calculation",
+            "dataType": "string",
+            "sourceColumn": "Calculation"
+          }
+        ]
+      }
+    ],
+    "relationships": [
+      {
+        "name": "a1b2c3d4",
+        "fromTable": "Sales",
+        "fromColumn": "CustomerKey",
+        "toTable": "Customer",
+        "toColumn": "CustomerKey"
+      },
+      {
+        "name": "e5f6a7b8",
+        "fromTable": "Calendar",
+        "fromColumn": "Date",
+        "toTable": "Sales",
+        "toColumn": "OrderDate",
+        "fromCardinality": "one",
+        "toCardinality": "many"
+      },
+      {
+        "name": "inactive-one",
+        "fromTable": "Sales",
+        "fromColumn": "OrderDate",
+        "toTable": "Calendar",
+        "toColumn": "Date",
+        "isActive": false
+      },
+      {
+        "name": "many-to-many",
+        "fromTable": "Sales",
+        "fromColumn": "Amount",
+        "toTable": "Customer",
+        "toColumn": "Country",
+        "fromCardinality": "many",
+        "toCardinality": "many"
+      },
+      {
+        "name": "dangling",
+        "fromTable": "Sales",
+        "fromColumn": "CustomerKey",
+        "toTable": "Internal Staging",
+        "toColumn": "Junk"
+      }
+    ]
+  }
+}
