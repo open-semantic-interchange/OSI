@@ -190,7 +190,18 @@ def read_stash(obj):
         if not isinstance(data, dict):
             raise ConversionError(
                 f"{VENDOR} custom_extensions data must be a JSON object")
-        data.pop("_v", None)
+        version = data.pop("_v", STASH_VERSION)
+        if not isinstance(version, int) or isinstance(version, bool):
+            raise ConversionError(
+                f"{VENDOR} custom_extensions data has a non-integer version "
+                f"'_v': {version!r}")
+        if version > STASH_VERSION:
+            # Replaying a payload written by a newer converter could silently
+            # mean something different, so refuse rather than guess.
+            raise ConversionError(
+                f"{VENDOR} custom_extensions data was written by a newer "
+                f"converter (format version {version}, this converter "
+                f"understands {STASH_VERSION}); upgrade ossie-microsoft")
         return data
     return {}
 

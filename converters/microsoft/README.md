@@ -203,3 +203,5 @@ uv run pytest
 - A `--strict` CLI flag that turns any lossy step into a non-zero exit.
 - Optional, explicitly opt-in SQL-to-DAX translation for the subset of aggregates that
   can be translated soundly, with a hard failure on the rest.
+- An end-to-end smoke test that deploys emitted TMSL to an Analysis Services instance,
+  so the output is validated by the engine itself and not only by these tests.

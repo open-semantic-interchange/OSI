@@ -25,7 +25,7 @@ import pytest
 import yaml
 
 from ossie_microsoft import convert_ossie_to_semantic_model, convert_semantic_model_to_ossie
-from ossie_microsoft._common import OSSIE_VERSION, make_expression, write_stash
+from ossie_microsoft._common import OSSIE_VERSION, make_expression, read_stash, write_stash
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -635,3 +635,42 @@ def test_an_edited_expression_beats_a_preserved_source_column():
         warnings.simplefilter("ignore")
         column = _column(_table(_convert(semantic_model), "T"), "C")
     assert column["sourceColumn"] == "other_column"
+
+
+def test_a_stash_written_by_a_newer_converter_is_refused():
+    """Replaying a payload we may misunderstand is worse than failing loudly."""
+    from ossie_microsoft._common import ConversionError, STASH_VERSION, VENDOR
+
+    obj = {
+        "custom_extensions": [
+            {"vendor_name": VENDOR, "data": json.dumps({"_v": STASH_VERSION + 1})}
+        ]
+    }
+    with pytest.raises(ConversionError, match="newer converter"):
+        read_stash(obj)
+
+
+def test_a_stash_with_a_non_integer_version_is_refused():
+    from ossie_microsoft._common import ConversionError, VENDOR
+
+    obj = {
+        "custom_extensions": [
+            {"vendor_name": VENDOR, "data": json.dumps({"_v": "1"})}
+        ]
+    }
+    with pytest.raises(ConversionError, match="non-integer version"):
+        read_stash(obj)
+
+
+def test_a_stash_this_converter_understands_is_replayed():
+    from ossie_microsoft._common import STASH_VERSION, VENDOR
+
+    obj = {
+        "custom_extensions": [
+            {
+                "vendor_name": VENDOR,
+                "data": json.dumps({"_v": STASH_VERSION, "lineageTag": "abc"}),
+            }
+        ]
+    }
+    assert read_stash(obj) == {"lineageTag": "abc"}
