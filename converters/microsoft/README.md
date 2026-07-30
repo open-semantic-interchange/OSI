@@ -19,13 +19,10 @@
 
 # Apache Ossie Microsoft Converter
 
-Converts a Microsoft Power BI / Fabric semantic model — a TMSL `model.bim` document — into
-an Apache Ossie (OSI) semantic model. The conversion is a pure offline transform: it reads a
-parsed `model.bim` and returns OSI YAML, with no connection to Power BI or Fabric required.
-
-Only the import direction (Power BI -> Ossie) is implemented today. See
-[Limitations](#limitations) for what is dropped and
-[Roadmap](#roadmap) for the export direction.
+Converts between a Microsoft Power BI / Fabric semantic model — a TMSL `model.bim`
+document — and an Apache Ossie (OSI) semantic model, in both directions. The conversion
+is a pure offline transform on parsed documents: no connection to Power BI or Fabric is
+required, and the package depends only on PyYAML.
 
 ## Installation
 
@@ -36,25 +33,29 @@ uv sync
 
 ## Usage
 
+### Command line
+
+```bash
+ossie-microsoft import -i model.bim  -o model.yaml   # Power BI -> Apache Ossie
+ossie-microsoft export -i model.yaml -o model.bim    # Apache Ossie -> Power BI
+```
+
+With no `-o`, the result is written to stdout.
+
 ### Library
 
 ```python
 import json
-from ossie_microsoft import convert_semantic_model_to_ossie
+
+import yaml
+
+from ossie_microsoft import convert_ossie_to_semantic_model, convert_semantic_model_to_ossie
 
 with open("model.bim", encoding="utf-8-sig") as fh:
-    bim_file = json.load(fh)
+    ossie_yaml = convert_semantic_model_to_ossie(json.load(fh))
 
-ossie_yaml = convert_semantic_model_to_ossie(bim_file)
+bim = convert_ossie_to_semantic_model(yaml.safe_load(ossie_yaml))
 ```
-
-### Command line
-
-```bash
-ossie-microsoft import -i model.bim -o model.yaml
-```
-
-With no `-o`, the OSI YAML is written to stdout.
 
 ## Mapping
 
@@ -71,36 +72,114 @@ With no `-o`, the OSI YAML is written to stdout.
 | temporal `dataType` or `dataCategory: Time` | `field.dimension.is_time` |
 | `table.measures[]` | `metrics[]` (`DAX` dialect) |
 | `model.relationships[]` | `relationships[]` |
+| everything else | `custom_extensions` (vendor `POWER_BI`) |
 
-DAX expressions are emitted under the `DAX` dialect rather than translated to SQL, so no
-expression semantics are invented during conversion. Consumers that need SQL should
-translate the `DAX` dialect expression themselves.
+## Design rule: expressions are never rewritten
 
-## Limitations
+Power BI evaluates DAX. Apache Ossie field expressions are usually SQL. The two languages
+do not share an evaluation model — DAX aggregates resolve against a filter context that
+has no SQL equivalent — so this converter carries expressions across in the dialect they
+were authored in and **never machine-translates one into the other**.
 
-Skipped model objects:
+Concretely:
 
-- Private tables (`isPrivate`), calculation groups, and auto-generated date tables
-  (`LocalDateTable_*`, `DateTableTemplate_*`).
-- `rowNumber` columns, which are storage-engine artifacts.
-- Inactive relationships (`isActive: false`) — OSI has no inactive-join concept, so keeping
-  one would misrepresent the active join graph.
-- Many-to-many relationships — OSI relationships are many-to-one or one-to-one only.
-  One-to-many relationships are flipped so the many side becomes `from`.
+- A Power BI measure becomes a metric with a `DAX` dialect expression, not a SQL one.
+- On export, a metric becomes a measure only if it carries a `DAX` expression. A metric
+  with only a SQL expression is reported and skipped.
+- A field expression becomes a TMSL `sourceColumn` only when it is a plain column
+  reference, which is exactly what `sourceColumn` means. A computed SQL expression is
+  reported and skipped.
 
-Dropped Power BI concepts that have no OSI counterpart: format strings, display folders,
-perspectives, row-level and object-level security, KPIs, hierarchies, storage and partition
-modes, cross-filter direction, translations, calculation items, and annotations.
+The reason is that a partial rewrite fails silently. An unrecognized function passed
+through unchanged, a `CAST` quietly dropped, or an aggregate distributed across a join
+all produce a model that loads and returns a number — just the wrong number. A missing
+measure is a bug a modeler notices; a plausible wrong one is not.
 
-Power BI data types `automatic`, `unknown`, and `variant` have no portable OSI equivalent and
-are left unmapped.
+If you need SQL-to-DAX translation, do it deliberately as a separate step and author the
+result into the `DAX` dialect before exporting.
 
-## Roadmap
+## Losslessness
 
-- Export direction (Ossie -> TMSL/TMDL).
-- Preserve dropped Power BI metadata in `custom_extensions` under vendor `POWER_BI` so that a
-  round trip is lossless.
-- Optional SQL-to-DAX and DAX-to-SQL expression translation.
+Nothing is discarded silently. The converter follows the two rules in
+[`converters/README.md`](../README.md):
+
+1. **Preserve.** TMSL properties with no Apache Ossie counterpart — annotations,
+   partitions, hierarchies, roles, perspectives, cultures, query groups, format strings,
+   display folders, KPIs, cross-filter behaviour — are stored in a versioned JSON blob
+   in a `POWER_BI` `custom_extensions` entry, alongside excluded tables and skipped
+   relationships. The export direction replays them, so a `model.bim` converted to
+   Apache Ossie and back is the same model.
+
+2. **Report.** Anything that genuinely cannot be represented raises a `UserWarning`
+   naming the object and the reason. Callers who need a hard guarantee can escalate:
+
+   ```python
+   import warnings
+
+   with warnings.catch_warnings():
+       warnings.simplefilter("error")
+       ossie_yaml = convert_semantic_model_to_ossie(bim)  # raises if anything is lost
+   ```
+
+A model that uses no Power BI-specific features converts to clean, vendor-neutral Apache
+Ossie with no `custom_extensions` at all.
+
+## Data type notes
+
+TMSL's `dataType` vocabulary is the Tabular Object Model `DataType` enum. It has **no**
+date-only, time-only or timezone-aware member: every temporal value is stored as
+`dateTime`.
+
+| TMSL | Apache Ossie | Note |
+|------|--------------|------|
+| `string` | `String` | |
+| `int64` | `Integer` | 64-bit in the model, but report visuals are only exact to 2^53 − 1 |
+| `decimal` | `Decimal` | "Fixed Decimal Number": exact, 19 digits, 4 after the point |
+| `double` | `Float` | "Decimal Number": 64-bit floating point, approximate |
+| `boolean` | `Boolean` | |
+| `dateTime` | `DateTime`, or `Date` when the format string has no time part | |
+| `binary`, `variant` | `Opaque` | no portable equivalent; reported |
+| `automatic`, `unknown` | *(omitted)* | the engine has not resolved a type |
+
+Consequences worth knowing:
+
+- **Date-only intent lives in the format string.** A `dateTime` column formatted with
+  only date tokens is imported as `Date`; an exported `Date` field gets a date-only
+  format string back. Quoted literals and backslash escapes are stripped before tokens
+  are detected, so the `h` in `"month" mmm yyyy` is display text, not an hour token. Note
+  also that in these VBA-style format strings `m` means *month* unless it directly
+  follows an hour token, which is why minutes are written `n`.
+- **`Time` and `DateTimeTz` do not survive export.** They collapse onto `dateTime`,
+  gaining a date part or losing a UTC offset respectively. Both cases are reported.
+- **`double` is not `Decimal`.** Mapping Power BI's approximate "Decimal Number" onto an
+  exact decimal type would overstate its precision.
+- Values outside years 1900–9999 are outside the Power BI `dateTime` range, and time is
+  stored at 1/300 second (about 3.33 ms) granularity.
+
+## Constructs with no equivalent
+
+These are reported rather than approximated, in either direction:
+
+| Construct | Why |
+|-----------|-----|
+| Inactive relationships | Apache Ossie has no inactive-join concept; keeping one would misrepresent the join graph |
+| Many-to-many relationships | Apache Ossie relationships are many-to-one or one-to-one |
+| Composite relationships | A TMSL relationship joins exactly one column pair |
+| Composite primary/unique keys | TMSL marks a single key column per table |
+| `Opaque` fields | Power BI has no untyped data type |
+| Metrics without a DAX expression | see [Design rule](#design-rule-expressions-are-never-rewritten) |
+| Computed non-DAX field expressions | as above |
+| Other vendors' `custom_extensions` | not interpretable by Power BI |
+
+On import, private tables, calculation groups, auto-generated date tables
+(`LocalDateTable_*`, `DateTableTemplate_*`) and `rowNumber` columns are left out of the
+vendor-neutral model — they are Power BI implementation details — but preserved in the
+model stash so export restores them. One-to-many relationships are flipped so the many
+side is `from`, and the original orientation is recorded.
+
+On export, a dataset whose Power BI partition was not preserved gets a placeholder
+partition containing an M `error` expression that names the missing source. A refresh
+then fails with an actionable message rather than a query that quietly loads nothing.
 
 ## Testing
 
@@ -108,3 +187,10 @@ are left unmapped.
 cd converters/microsoft
 uv run pytest
 ```
+
+## Roadmap
+
+- TMDL as an alternative serialization alongside TMSL `model.bim`.
+- A `--strict` CLI flag that turns any lossy step into a non-zero exit.
+- Optional, explicitly opt-in SQL-to-DAX translation for the subset of aggregates that
+  can be translated soundly, with a hard failure on the rest.
