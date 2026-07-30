@@ -116,7 +116,6 @@ def build_ossie_document(bim_file):
     description = model.get("description") or bim_file.get("description")
     if description:
         semantic_model["description"] = text(description)
-
     semantic_model["datasets"] = [_convert_table(t) for t in tables]
 
     relationships, excluded_relationships = _convert_relationships(
@@ -460,6 +459,12 @@ def _stash_model(semantic_model, bim_file, model, excluded_tables, excluded_rela
     # Properties that sit outside the `model` object (compatibilityLevel and friends) are
     # nested so they cannot collide with a model property of the same name.
     document = _passthrough(bim_file, _DOCUMENT_CONSUMED)
+    # TMSL allows a description on both the document and the model. The Apache Ossie
+    # model has one, so record where it came from and keep the other verbatim.
+    if not model.get("description") and bim_file.get("description"):
+        stash["descriptionSource"] = "document"
+    elif model.get("description") and bim_file.get("description"):
+        document["description"] = bim_file["description"]
     if document:
         stash["document"] = document
     if excluded_tables:

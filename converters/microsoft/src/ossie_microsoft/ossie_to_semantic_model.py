@@ -59,7 +59,9 @@ _PARTITION_PLACEHOLDER = (
 )
 
 # Stash keys the export interprets rather than replays as TMSL properties.
-_STASH_CONTROL_KEYS = frozenset({"excludedTables", "excludedRelationships", "document"})
+_STASH_CONTROL_KEYS = frozenset(
+    {"excludedTables", "excludedRelationships", "document", "descriptionSource"}
+)
 _TABLE_CONTROL_KEYS = frozenset({"excludedColumns"})
 _RELATIONSHIP_CONTROL_KEYS = frozenset({"flipped", "name"})
 _MEASURE_CONTROL_KEYS = frozenset({"table", "name"})
@@ -124,18 +126,23 @@ def convert_ossie_to_semantic_model(document):
     tables.extend(stash.get("excludedTables") or [])
 
     model = {"tables": tables}
-    if semantic_model.get("description"):
-        model["description"] = semantic_model["description"]
+    description = semantic_model.get("description")
+    if description and stash.get("descriptionSource") != "document":
+        model["description"] = description
     if relationships:
         model["relationships"] = relationships
-    # Everything else the import could not represent, replayed verbatim.
-    document_properties = stash.get("document") or {}
+    # Everything the import could not represent, replayed verbatim. `setdefault` so a
+    # preserved value can never overwrite a property derived from the current core
+    # fields -- the core document is the source of truth if the two disagree.
+    document_properties = dict(stash.get("document") or {})
     for key, value in stash.items():
         if key not in _STASH_CONTROL_KEYS:
-            model[key] = value
+            model.setdefault(key, value)
     model.setdefault("culture", "en-US")
 
     bim = {"name": semantic_model.get("name") or "semantic_model"}
+    if description and stash.get("descriptionSource") == "document":
+        bim["description"] = description
     bim.update(document_properties)
     bim.setdefault("compatibilityLevel", DEFAULT_COMPATIBILITY_LEVEL)
     bim["model"] = model
@@ -215,7 +222,7 @@ def _convert_dataset(dataset):
 
     for key, value in stash.items():
         if key not in _TABLE_CONTROL_KEYS and key != "partitions":
-            table[key] = value
+            table.setdefault(key, value)
     return table
 
 
@@ -282,8 +289,10 @@ def _convert_field(field, dataset_scope):
         column["formatString"] = DATE_ONLY_FORMAT
 
     # Whatever the import could not represent, including a `dataType` the portable
-    # vocabulary could not reproduce.
-    column.update(stash)
+    # vocabulary could not reproduce. `setdefault` so a preserved value -- notably a
+    # stale `type` -- can never contradict what the current expression implies.
+    for key, value in stash.items():
+        column.setdefault(key, value)
     return column
 
 
@@ -377,7 +386,7 @@ def _apply_measures(tables, metrics):
             measure["dataType"] = datatype
         for key, value in stash.items():
             if key not in _MEASURE_CONTROL_KEYS:
-                measure[key] = value
+                measure.setdefault(key, value)
         table.setdefault("measures", []).append(measure)
 
 
@@ -427,7 +436,7 @@ def _convert_relationships(relationships, table_columns):
         }
         for key, value in stash.items():
             if key not in _RELATIONSHIP_CONTROL_KEYS:
-                tmsl[key] = value
+                tmsl.setdefault(key, value)
         converted.append(prune(tmsl))
     return converted
 

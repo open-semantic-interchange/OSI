@@ -505,3 +505,59 @@ def test_a_data_type_with_no_portable_equivalent_is_restored(tmsl_type):
             yaml.safe_load(convert_semantic_model_to_ossie(bim))
         )
     assert _column(_table(result, "T"), "C")["dataType"] == tmsl_type
+
+
+def test_a_stale_stash_cannot_contradict_an_edited_expression():
+    # Someone imports a data column, then edits the Ossie field to hold DAX. The
+    # preserved `type: data` must not override what the expression now implies.
+    semantic_model = _minimal()
+    field = semantic_model["datasets"][0]["fields"][0]
+    field["expression"] = make_expression("1 + 1", "DAX")
+    write_stash(field, {"type": "data", "isHidden": True})
+    column = _column(_table(_convert(semantic_model), "T"), "C")
+    assert column["type"] == "calculated"
+    assert column["isHidden"] is True
+
+
+def test_a_stale_stash_cannot_override_a_core_description():
+    semantic_model = _minimal()
+    semantic_model["datasets"][0]["description"] = "current"
+    write_stash(semantic_model["datasets"][0], {"description": "stale"})
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        assert _table(_convert(semantic_model), "T")["description"] == "current"
+
+
+def test_a_document_description_returns_to_the_document():
+    # TMSL allows a description on both the document and the model; the Apache Ossie
+    # model has one, so the import records which one it came from.
+    bim = {
+        "name": "m",
+        "description": "document description",
+        "model": {"tables": [{"name": "T", "columns": []}]},
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = convert_ossie_to_semantic_model(
+            yaml.safe_load(convert_semantic_model_to_ossie(bim))
+        )
+    assert result["description"] == "document description"
+    assert "description" not in result["model"]
+
+
+def test_both_descriptions_survive():
+    bim = {
+        "name": "m",
+        "description": "document description",
+        "model": {
+            "description": "model description",
+            "tables": [{"name": "T", "columns": []}],
+        },
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = convert_ossie_to_semantic_model(
+            yaml.safe_load(convert_semantic_model_to_ossie(bim))
+        )
+    assert result["description"] == "document description"
+    assert result["model"]["description"] == "model description"
