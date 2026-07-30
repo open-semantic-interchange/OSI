@@ -116,6 +116,14 @@ TEMPORAL_DATATYPES = frozenset({"Date", "Time", "DateTime", "DateTimeTz"})
 # date-only intent survives into a model that has no date-only data type.
 DATE_ONLY_FORMAT = "yyyy-mm-dd"
 
+# VBA named date/time formats, which are whole-string names rather than token sequences.
+# They must be matched before tokenizing: "Short Date" is date-only despite containing an
+# `h`, and "Long Date" contains an `n`.
+_NAMED_DATE_ONLY_FORMATS = frozenset({"long date", "medium date", "short date"})
+_NAMED_TEMPORAL_FORMATS = _NAMED_DATE_ONLY_FORMATS | frozenset(
+    {"general date", "long time", "medium time", "short time"}
+)
+
 # Time-of-day tokens in a VBA-style (model-level) format string. `n` is minutes and `h`
 # is hours; `m` is deliberately absent because in VBA-style formats `m` means *month*
 # except when it directly follows an hour token.
@@ -160,7 +168,10 @@ def is_date_only_format(format_string):
     """
     if not format_string:
         return False
-    stripped = _FORMAT_LITERAL_RE.sub("", text(format_string))
+    normalized = text(format_string).strip()
+    if normalized.lower() in _NAMED_TEMPORAL_FORMATS:
+        return normalized.lower() in _NAMED_DATE_ONLY_FORMATS
+    stripped = _FORMAT_LITERAL_RE.sub("", normalized)
     if not _DATE_FORMAT_TOKEN_RE.search(stripped):
         return False
     return not _TIME_FORMAT_TOKEN_RE.search(stripped)

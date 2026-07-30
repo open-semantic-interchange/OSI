@@ -382,3 +382,20 @@ def test_a_conversion_can_be_asserted_lossless_by_escalating_warnings():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         convert_semantic_model_to_ossie(bim)
+
+
+@pytest.mark.parametrize("format_string", ["Short Date", "Long Date", "Medium Date"])
+def test_a_named_date_format_yields_a_date_field(format_string):
+    # A VBA named format is a whole-string name, not a token sequence: "Short Date"
+    # contains an "h" and "Long Date" an "n", neither of which is a time token here.
+    assert _single_field_datatype("dateTime", format_string) == "Date"
+
+
+@pytest.mark.parametrize("format_string", ["General Date", "Short Time", "Long Time"])
+def test_a_named_format_with_a_time_part_stays_a_datetime(format_string):
+    assert _single_field_datatype("dateTime", format_string) == "DateTime"
+
+
+@pytest.mark.parametrize("format_string", ["#,0.00", "\\$#,0.00", "0.00%"])
+def test_a_numeric_format_string_is_not_a_date(format_string):
+    assert _single_field_datatype("dateTime", format_string) == "DateTime"
