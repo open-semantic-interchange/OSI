@@ -8,6 +8,12 @@
       {
         "name": "Sales",
         "description": "Sales fact table",
+        "annotations": [
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
         "columns": [
           {
             "name": "RowNumber",
@@ -34,7 +40,16 @@
             "name": "Amount",
             "description": "Extended sales amount",
             "dataType": "decimal",
-            "sourceColumn": "amount"
+            "sourceColumn": "amount",
+            "formatString": "#,0.00",
+            "summarizeBy": "sum",
+            "displayFolder": "Financials",
+            "annotations": [
+              {
+                "name": "PBI_FormatHint",
+                "value": "{\"isCustom\":true}"
+              }
+            ]
           },
           {
             "name": "AmountWithTax",

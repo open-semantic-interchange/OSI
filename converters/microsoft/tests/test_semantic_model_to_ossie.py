@@ -18,31 +18,17 @@
 """Tests for the Power BI (TMSL ``model.bim``) -> Apache Ossie converter."""
 
 import json
+import warnings
 from pathlib import Path
 
 import pytest
 import yaml
 
 from ossie_microsoft import convert_semantic_model_to_ossie
+from ossie_microsoft._common import VENDOR, read_stash
 
 FIXTURES = Path(__file__).parent / "fixtures"
 REPO_ROOT = Path(__file__).resolve().parents[3]
-
-
-@pytest.fixture(scope="module")
-def bim():
-    with open(FIXTURES / "sales_model.bim", encoding="utf-8-sig") as fh:
-        return json.load(fh)
-
-
-@pytest.fixture(scope="module")
-def osi(bim):
-    return yaml.safe_load(convert_semantic_model_to_ossie(bim))
-
-
-@pytest.fixture(scope="module")
-def model(osi):
-    return osi["semantic_model"][0]
 
 
 def _dataset(model, name):
@@ -231,3 +217,168 @@ def test_dax_is_a_spec_dialect():
     with open(REPO_ROOT / "core-spec" / "osi-schema.json", encoding="utf-8") as fh:
         schema = json.load(fh)
     assert "DAX" in schema["$defs"]["Dialect"]["enum"]
+
+
+# --- lossless preservation (POWER_BI stash) --------------------------------
+
+
+def test_model_stash_preserves_excluded_tables_and_relationships(model):
+    stash = read_stash(model)
+    assert stash["compatibilityLevel"] == 1550
+    assert stash["culture"] == "en-US"
+    excluded = {t["name"] for t in stash["excludedTables"]}
+    assert excluded == {"LocalDateTable_9f2a1b3c", "Internal Staging", "Time Intelligence"}
+    # Inactive, many-to-many and dangling relationships are kept verbatim.
+    assert len(stash["excludedRelationships"]) == 3
+
+
+def test_dataset_stash_preserves_partitions_and_annotations(model):
+    stash = read_stash(_dataset(model, "Sales"))
+    assert stash["partitions"][0]["source"]["type"] == "m"
+    assert stash["annotations"]
+
+
+def test_field_stash_preserves_format_string_and_display_folder(model):
+    stash = read_stash(_field(_dataset(model, "Sales"), "Amount"))
+    assert stash["formatString"] == "#,0.00"
+    assert stash["summarizeBy"] == "sum"
+
+
+def test_metric_stash_records_the_home_table(model):
+    assert read_stash(_metric(model, "Total Sales"))["table"] == "Sales"
+
+
+def test_relationship_stash_records_a_flipped_orientation(model):
+    flipped = next(
+        r for r in model["relationships"] if r["from"] == "Sales" and r["to"] == "Calendar"
+    )
+    stash = read_stash(flipped)
+    assert stash["flipped"] is True
+    assert stash["fromCardinality"] == "one"
+
+
+def test_a_model_without_power_bi_specifics_has_no_stash():
+    bim = {
+        "name": "plain",
+        "model": {
+            "tables": [
+                {
+                    "name": "T",
+                    "columns": [{"name": "C", "dataType": "string", "sourceColumn": "C"}],
+                }
+            ]
+        },
+    }
+    osi = yaml.safe_load(convert_semantic_model_to_ossie(bim))
+    dataset = osi["semantic_model"][0]["datasets"][0]
+    assert "custom_extensions" not in dataset
+    assert "custom_extensions" not in dataset["fields"][0]
+
+
+def test_stash_data_is_versioned_json(model):
+    ext = next(e for e in model["custom_extensions"] if e["vendor_name"] == VENDOR)
+    assert json.loads(ext["data"])["_v"] == 1
+
+
+# --- data types ------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "tmsl_type,expected",
+    [
+        ("string", "String"),
+        ("int64", "Integer"),
+        # "Fixed Decimal Number" is exact; "Decimal Number" is 64-bit floating point.
+        ("decimal", "Decimal"),
+        ("double", "Float"),
+        ("boolean", "Boolean"),
+        ("dateTime", "DateTime"),
+    ],
+)
+def test_data_types_map_to_the_portable_equivalent(tmsl_type, expected):
+    assert _single_field_datatype(tmsl_type) == expected
+
+
+@pytest.mark.parametrize("tmsl_type", ["binary", "variant"])
+def test_types_without_a_portable_equivalent_become_opaque(tmsl_type):
+    with pytest.warns(UserWarning, match="no portable equivalent"):
+        assert _single_field_datatype(tmsl_type) == "Opaque"
+
+
+@pytest.mark.parametrize("tmsl_type", ["automatic", "unknown"])
+def test_unresolved_types_omit_the_datatype(tmsl_type):
+    with pytest.warns(UserWarning, match="carries no type information"):
+        assert _single_field_datatype(tmsl_type) is None
+
+
+def test_an_unrecognized_type_omits_the_datatype():
+    with pytest.warns(UserWarning, match="unrecognized TMSL data type"):
+        assert _single_field_datatype("nonsense") is None
+
+
+def test_a_date_only_format_string_yields_a_date_field():
+    # Power BI has no date-only data type; the format string is the only signal.
+    assert _single_field_datatype("dateTime", "yyyy-mm-dd") == "Date"
+
+
+def test_a_format_string_with_a_time_part_stays_a_datetime():
+    assert _single_field_datatype("dateTime", "yyyy-mm-dd hh:nn") == "DateTime"
+
+
+def test_a_quoted_literal_in_a_format_string_is_not_a_time_token():
+    # The "h" here is display text, not an hour token.
+    assert _single_field_datatype("dateTime", '"month" mmm yyyy') == "Date"
+
+
+def _single_field_datatype(tmsl_type, format_string=None):
+    column = {"name": "C", "dataType": tmsl_type, "sourceColumn": "C"}
+    if format_string:
+        column["formatString"] = format_string
+    bim = {"name": "m", "model": {"tables": [{"name": "T", "columns": [column]}]}}
+    osi = yaml.safe_load(convert_semantic_model_to_ossie(bim))
+    return osi["semantic_model"][0]["datasets"][0]["fields"][0].get("datatype")
+
+
+# --- lossy steps are reported ----------------------------------------------
+
+
+def test_every_lossy_step_warns(bim):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        convert_semantic_model_to_ossie(bim)
+    messages = [str(w.message) for w in caught]
+    assert any("inactive relationships" in m for m in messages)
+    assert any("many-to-many" in m for m in messages)
+    assert any("not exported" in m for m in messages)
+    assert any("Time Intelligence" in m for m in messages)
+
+
+def test_a_measure_without_an_expression_is_skipped():
+    bim = {
+        "name": "m",
+        "model": {
+            "tables": [
+                {"name": "T", "columns": [], "measures": [{"name": "Empty"}]}
+            ]
+        },
+    }
+    with pytest.warns(UserWarning, match="no expression"):
+        osi = yaml.safe_load(convert_semantic_model_to_ossie(bim))
+    assert "metrics" not in osi["semantic_model"][0]
+
+
+def test_a_conversion_can_be_asserted_lossless_by_escalating_warnings():
+    bim = {
+        "name": "plain",
+        "model": {
+            "tables": [
+                {
+                    "name": "T",
+                    "columns": [{"name": "C", "dataType": "string", "sourceColumn": "C"}],
+                }
+            ]
+        },
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        convert_semantic_model_to_ossie(bim)
