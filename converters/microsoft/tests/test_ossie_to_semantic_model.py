@@ -591,3 +591,47 @@ def test_an_edited_datatype_beats_the_preserved_one(tmsl_type):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         assert _column(_table(_convert(semantic_model), "T"), "C")["dataType"] == "string"
+
+
+@pytest.mark.parametrize("source_column", ["Order Date", "Sales-Amount", "123Code", "col%"])
+def test_a_source_column_that_is_not_a_sql_identifier_survives(source_column):
+    # A TMSL sourceColumn names a column in the source query, which may be spelled in
+    # ways SQL would need to quote.
+    bim = {
+        "name": "m",
+        "model": {
+            "tables": [
+                {
+                    "name": "T",
+                    "columns": [
+                        {"name": "C", "dataType": "string", "sourceColumn": source_column}
+                    ],
+                    "partitions": [
+                        {
+                            "name": "T",
+                            "mode": "import",
+                            "source": {"type": "entity", "entityName": "t"},
+                        }
+                    ],
+                }
+            ]
+        },
+    }
+    with warnings.catch_warnings():
+        # Nothing about this model is lossy, so any warning at all is a failure.
+        warnings.simplefilter("error")
+        result = convert_ossie_to_semantic_model(
+            yaml.safe_load(convert_semantic_model_to_ossie(bim))
+        )
+    assert _column(_table(result, "T"), "C")["sourceColumn"] == source_column
+
+
+def test_an_edited_expression_beats_a_preserved_source_column():
+    semantic_model = _minimal()
+    field = semantic_model["datasets"][0]["fields"][0]
+    field["expression"] = make_expression("other_column", "ANSI_SQL")
+    write_stash(field, {"sourceColumn": "Order Date"})
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        column = _column(_table(_convert(semantic_model), "T"), "C")
+    assert column["sourceColumn"] == "other_column"

@@ -88,7 +88,9 @@ Concretely:
   with only a SQL expression is reported and skipped.
 - A field expression becomes a TMSL `sourceColumn` only when it is a plain column
   reference, which is exactly what `sourceColumn` means. A computed SQL expression is
-  reported and skipped.
+  reported and skipped. (A `sourceColumn` the source query spells with spaces, a hyphen
+  or a leading digit is preserved and replayed verbatim, so it is not mistaken for a
+  computed expression.)
 
 The reason is that a partial rewrite fails silently. An unrecognized function passed
 through unchanged, a `CAST` quietly dropped, or an aggregate distributed across a join

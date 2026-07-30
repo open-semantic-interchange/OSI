@@ -38,6 +38,7 @@ from ._common import (
     AUTO_DATE_TABLE_RE,
     DIALECT_ANSI,
     DIALECT_DAX,
+    IDENTIFIER_RE,
     OSSIE_TO_TMSL_DATATYPE,
     OSSIE_VERSION,
     TEMPORAL_DATATYPES,
@@ -267,6 +268,13 @@ def _convert_column(column, table_scope):
     if column.get("type") == "calculated":
         # `type` is implied by the DAX expression on the way back out.
         stash.pop("type", None)
+    else:
+        source_column = column.get("sourceColumn") or name
+        if not IDENTIFIER_RE.match(source_column):
+            # A TMSL `sourceColumn` may hold anything the source query exposes,
+            # including spaces or a leading digit. Preserve it so the export replays it
+            # verbatim instead of trying to read it back as a SQL identifier.
+            stash["sourceColumn"] = source_column
     if not _is_reversible_datatype(column.get("dataType"), datatype):
         # The portable type does not map back to this exact TMSL type, so keep the
         # original rather than let the export guess.

@@ -66,7 +66,7 @@ _STASH_CONTROL_KEYS = frozenset(
 _TABLE_CONTROL_KEYS = frozenset({"excludedColumns"})
 _RELATIONSHIP_CONTROL_KEYS = frozenset({"flipped", "name"})
 _MEASURE_CONTROL_KEYS = frozenset({"table", "name"})
-_COLUMN_CONTROL_KEYS = frozenset({"dataType"})
+_COLUMN_CONTROL_KEYS = frozenset({"dataType", "sourceColumn"})
 
 # Apache Ossie temporal types that Power BI cannot represent faithfully. Power BI stores
 # every temporal value as `dateTime`, so a time-of-day type gains a date part and a
@@ -275,7 +275,7 @@ def _convert_field(field, dataset_scope):
         column["type"] = "calculated"
         column["expression"] = _tmsl_text(expressions[DIALECT_DAX])
     else:
-        source_column = _source_column(expressions, name, scope)
+        source_column = _source_column(expressions, name, stash, scope)
         if source_column is None:
             return None
         column["sourceColumn"] = source_column
@@ -314,19 +314,25 @@ def _column_datatype(field, stash, scope):
     return _map_datatype(datatype, scope)
 
 
-def _source_column(expressions, name, scope):
+def _source_column(expressions, name, stash, scope):
     """Resolve a non-DAX field expression to a TMSL ``sourceColumn``, or None.
 
-    Only a bare identifier can be carried across: it names a column in the table's
-    source query, which is exactly what ``sourceColumn`` means. A computed SQL
-    expression has no such equivalent and is not rewritten into DAX.
+    A ``sourceColumn`` names a column in the table's source query, so a plain column
+    reference carries across directly. A computed SQL expression has no such equivalent
+    and is not rewritten into DAX.
     """
     if not expressions:
         # No expression at all: the field name is the column name by definition.
         return name
 
     dialect = DIALECT_ANSI if DIALECT_ANSI in expressions else sorted(expressions)[0]
-    candidate = expressions[dialect].strip().strip('"').strip("`").strip("[]")
+    expression = expressions[dialect].strip()
+    if stash.get("sourceColumn") == expression:
+        # A preserved source column the source query exposes under a name that is not a
+        # bare SQL identifier, still unedited. Replay it rather than reparse it.
+        return expression
+
+    candidate = expression.strip('"').strip("`").strip("[]")
     if IDENTIFIER_RE.match(candidate):
         return candidate
     warn(
