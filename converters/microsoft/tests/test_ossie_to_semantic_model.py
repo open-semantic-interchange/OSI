@@ -578,3 +578,16 @@ def test_a_metric_datatype_is_not_forced_onto_a_measure():
     with pytest.warns(UserWarning, match="infers a measure's data type"):
         bim = _convert(semantic_model)
     assert "dataType" not in _table(bim, "T")["measures"][0]
+
+
+@pytest.mark.parametrize("tmsl_type", ["binary", "variant", "automatic", "unknown"])
+def test_an_edited_datatype_beats_the_preserved_one(tmsl_type):
+    # The stashed TMSL type is only replayed while the portable type still agrees with
+    # it. Once someone edits the Apache Ossie datatype, the edit is authoritative.
+    semantic_model = _minimal()
+    field = semantic_model["datasets"][0]["fields"][0]
+    field["datatype"] = "String"
+    write_stash(field, {"dataType": tmsl_type})
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        assert _column(_table(_convert(semantic_model), "T"), "C")["dataType"] == "string"

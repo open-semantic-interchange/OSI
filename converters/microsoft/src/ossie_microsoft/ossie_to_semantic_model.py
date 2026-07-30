@@ -39,6 +39,7 @@ from ._common import (
     IDENTIFIER_RE,
     OSSIE_TO_TMSL_DATATYPE,
     OSSIE_VERSION,
+    TMSL_TO_OSSIE_DATATYPE,
     ConversionError,
     dialect_expressions,
     foreign_vendor_extensions,
@@ -65,6 +66,7 @@ _STASH_CONTROL_KEYS = frozenset(
 _TABLE_CONTROL_KEYS = frozenset({"excludedColumns"})
 _RELATIONSHIP_CONTROL_KEYS = frozenset({"flipped", "name"})
 _MEASURE_CONTROL_KEYS = frozenset({"table", "name"})
+_COLUMN_CONTROL_KEYS = frozenset({"dataType"})
 
 # Apache Ossie temporal types that Power BI cannot represent faithfully. Power BI stores
 # every temporal value as `dateTime`, so a time-of-day type gains a date part and a
@@ -278,7 +280,7 @@ def _convert_field(field, dataset_scope):
             return None
         column["sourceColumn"] = source_column
 
-    datatype = _map_datatype(field.get("datatype"), scope) if "dataType" not in stash else None
+    datatype = _column_datatype(field, stash, scope)
     if datatype:
         column["dataType"] = datatype
     if field.get("description"):
@@ -292,8 +294,24 @@ def _convert_field(field, dataset_scope):
     # vocabulary could not reproduce. `setdefault` so a preserved value -- notably a
     # stale `type` -- can never contradict what the current expression implies.
     for key, value in stash.items():
-        column.setdefault(key, value)
+        if key not in _COLUMN_CONTROL_KEYS:
+            column.setdefault(key, value)
     return column
+
+
+def _column_datatype(field, stash, scope):
+    """Resolve a column's TMSL ``dataType``, preferring the core document.
+
+    The import stashes the original TMSL type whenever the portable vocabulary cannot
+    reproduce it -- ``binary``, ``variant``, ``automatic``, ``unknown``. That value is
+    only replayed while the portable type still agrees with it; once someone edits the
+    Apache Ossie ``datatype``, the edit wins and the stashed type is stale.
+    """
+    datatype = field.get("datatype")
+    stashed = stash.get("dataType")
+    if stashed is not None and TMSL_TO_OSSIE_DATATYPE.get(stashed) == datatype:
+        return stashed
+    return _map_datatype(datatype, scope)
 
 
 def _source_column(expressions, name, scope):
