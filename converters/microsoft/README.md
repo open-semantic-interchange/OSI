@@ -103,12 +103,15 @@ result into the `DAX` dialect before exporting.
 Nothing is discarded silently. The converter follows the two rules in
 [`converters/README.md`](../README.md):
 
-1. **Preserve.** TMSL properties with no Apache Ossie counterpart — annotations,
-   partitions, hierarchies, roles, perspectives, cultures, query groups, format strings,
-   display folders, KPIs, cross-filter behaviour — are stored in a versioned JSON blob
-   in a `POWER_BI` `custom_extensions` entry, alongside excluded tables and skipped
-   relationships. The export direction replays them, so a `model.bim` converted to
-   Apache Ossie and back is the same model.
+1. **Preserve.** Every TMSL property the Apache Ossie mapping does not consume —
+   annotations, partitions, hierarchies, roles, perspectives, cultures, query groups,
+   format strings, display folders, KPIs, cross-filter behaviour, relationship
+   cardinalities, `rowNumber` columns — is stored in a versioned JSON blob in a
+   `POWER_BI` `custom_extensions` entry, alongside excluded tables and skipped
+   relationships. This is a deny-list, not an allow-list: a TMSL property this converter
+   has never heard of is preserved too, rather than silently dropped. The export
+   direction replays it all, so a `model.bim` converted to Apache Ossie and back is the
+   same model.
 
 2. **Report.** Anything that genuinely cannot be represented raises a `UserWarning`
    naming the object and the reason. Callers who need a hard guarantee can escalate:
@@ -174,8 +177,12 @@ These are reported rather than approximated, in either direction:
 On import, private tables, calculation groups, auto-generated date tables
 (`LocalDateTable_*`, `DateTableTemplate_*`) and `rowNumber` columns are left out of the
 vendor-neutral model — they are Power BI implementation details — but preserved in the
-model stash so export restores them. One-to-many relationships are flipped so the many
-side is `from`, and the original orientation is recorded.
+stash so export restores them. One-to-many relationships are flipped so the many side is
+`from`, and the original orientation and cardinalities are recorded.
+
+A data type with no portable equivalent (`binary`, `variant`, `automatic`, `unknown`) is
+also kept in the stash, so the export restores the original TMSL type rather than
+guessing one from the portable model.
 
 On export, a dataset whose Power BI partition was not preserved gets a placeholder
 partition containing an M `error` expression that names the missing source. A refresh

@@ -318,10 +318,7 @@ def test_a_model_survives_a_round_trip(bim, bim_out):
     assert set(original) == set(result)
 
     for name, table in original.items():
-        expected = _normalize(table)
-        # A rowNumber column is a storage-engine artifact, not user data.
-        expected["columns"] = [c for c in expected["columns"] if c.get("type") != "rowNumber"]
-        assert expected == _normalize(result[name]), name
+        assert _normalize(table) == _normalize(result[name]), name
 
     assert _normalize(bim["model"]["relationships"]) == _normalize(
         bim_out["model"]["relationships"]
@@ -389,3 +386,122 @@ def test_import_export_is_stable_across_two_passes(bim):
             yaml.safe_load(convert_semantic_model_to_ossie(first))
         )
     assert first == second
+
+
+def test_an_unknown_tmsl_property_is_preserved():
+    # The stash is a deny-list, so TMSL properties this converter has never heard of
+    # still survive a round trip.
+    bim = {
+        "name": "m",
+        "someFutureDocumentProperty": 7,
+        "model": {
+            "someFutureModelProperty": "x",
+            "tables": [
+                {
+                    "name": "T",
+                    "someFutureTableProperty": True,
+                    "columns": [
+                        {
+                            "name": "C",
+                            "dataType": "string",
+                            "sourceColumn": "c",
+                            "keepUniqueRows": True,
+                            "alignment": "right",
+                            "displayOrdinal": 7,
+                            "sourceProviderType": "bigint",
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = convert_ossie_to_semantic_model(
+            yaml.safe_load(convert_semantic_model_to_ossie(bim))
+        )
+    assert result["someFutureDocumentProperty"] == 7
+    assert result["model"]["someFutureModelProperty"] == "x"
+    table = _table(result, "T")
+    assert table["someFutureTableProperty"] is True
+    column = _column(table, "C")
+    assert column["keepUniqueRows"] is True
+    assert column["alignment"] == "right"
+    assert column["displayOrdinal"] == 7
+    assert column["sourceProviderType"] == "bigint"
+
+
+def test_a_row_number_column_is_restored():
+    # It is kept out of the vendor-neutral model but is not lost.
+    bim = {
+        "name": "m",
+        "model": {
+            "tables": [
+                {
+                    "name": "T",
+                    "columns": [
+                        {"name": "RowNumber", "type": "rowNumber", "dataType": "int64"},
+                        {"name": "C", "dataType": "string", "sourceColumn": "c"},
+                    ],
+                }
+            ]
+        },
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        osi = yaml.safe_load(convert_semantic_model_to_ossie(bim))
+        result = convert_ossie_to_semantic_model(osi)
+    assert [f["name"] for f in osi["semantic_model"][0]["datasets"][0]["fields"]] == ["C"]
+    assert [c["name"] for c in _table(result, "T")["columns"]] == ["RowNumber", "C"]
+
+
+def test_a_one_to_one_relationship_keeps_its_cardinality():
+    # TMSL defaults to many-to-one, so a one-to-one has to be recorded explicitly or the
+    # export would silently widen it.
+    bim = {
+        "name": "m",
+        "model": {
+            "tables": [
+                {"name": "A", "columns": [{"name": "K", "dataType": "int64", "sourceColumn": "k"}]},
+                {"name": "B", "columns": [{"name": "K", "dataType": "int64", "sourceColumn": "k"}]},
+            ],
+            "relationships": [
+                {
+                    "name": "r",
+                    "fromTable": "A",
+                    "fromColumn": "K",
+                    "toTable": "B",
+                    "toColumn": "K",
+                    "fromCardinality": "one",
+                    "toCardinality": "one",
+                }
+            ],
+        },
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = convert_ossie_to_semantic_model(
+            yaml.safe_load(convert_semantic_model_to_ossie(bim))
+        )
+    assert result["model"]["relationships"] == [bim["model"]["relationships"][0]]
+
+
+@pytest.mark.parametrize("tmsl_type", ["binary", "variant", "automatic", "unknown"])
+def test_a_data_type_with_no_portable_equivalent_is_restored(tmsl_type):
+    bim = {
+        "name": "m",
+        "model": {
+            "tables": [
+                {
+                    "name": "T",
+                    "columns": [{"name": "C", "dataType": tmsl_type, "sourceColumn": "c"}],
+                }
+            ]
+        },
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = convert_ossie_to_semantic_model(
+            yaml.safe_load(convert_semantic_model_to_ossie(bim))
+        )
+    assert _column(_table(result, "T"), "C")["dataType"] == tmsl_type

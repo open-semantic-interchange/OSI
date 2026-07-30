@@ -38,6 +38,7 @@ from ._common import (
     AUTO_DATE_TABLE_RE,
     DIALECT_ANSI,
     DIALECT_DAX,
+    OSSIE_TO_TMSL_DATATYPE,
     OSSIE_VERSION,
     TEMPORAL_DATATYPES,
     TMSL_TO_OSSIE_DATATYPE,
@@ -54,59 +55,28 @@ _M_ITEM_RE = re.compile(r'Item\s*=\s*"([^"]+)"')
 _M_SCHEMA_RE = re.compile(r'Schema\s*=\s*"([^"]+)"')
 _M_DATABASE_RE = re.compile(r'Sql\.Databases?\s*\(\s*"[^"]*"\s*,\s*"([^"]+)"')
 
-# Model-level TMSL collections with no Apache Ossie counterpart. Preserved verbatim in
-# the model stash so a round trip can restore them.
-_MODEL_PASSTHROUGH_KEYS = (
-    "annotations",
-    "cultures",
-    "expressions",
-    "perspectives",
-    "queryGroups",
-    "roles",
+# TMSL properties consumed by the Apache Ossie mapping at each level. Everything else is
+# preserved verbatim in the stash. This is deliberately a deny-list rather than an
+# allow-list: TMSL grows new properties over time, and an allow-list would silently drop
+# any it had not been taught about, which is exactly what the losslessness rule forbids.
+_MODEL_CONSUMED = frozenset({"description", "tables", "relationships"})
+_DOCUMENT_CONSUMED = frozenset({"name", "description", "model"})
+_TABLE_CONSUMED = frozenset({"name", "description", "columns", "measures"})
+_COLUMN_CONSUMED = frozenset(
+    {"name", "description", "dataType", "sourceColumn", "expression", "isKey", "isUnique"}
 )
-
-# Table-level TMSL properties with no Apache Ossie counterpart.
-_TABLE_PASSTHROUGH_KEYS = (
-    "annotations",
-    "dataCategory",
-    "excludeFromModelRefresh",
-    "hierarchies",
-    "isHidden",
-    "partitions",
-    "showAsVariationsOnly",
-)
-
-# Column-level TMSL properties with no Apache Ossie counterpart.
-_COLUMN_PASSTHROUGH_KEYS = (
-    "annotations",
-    "dataCategory",
-    "displayFolder",
-    "formatString",
-    "isAvailableInMdx",
-    "isDefaultImage",
-    "isDefaultLabel",
-    "isHidden",
-    "isNullable",
-    "sortByColumn",
-    "summarizeBy",
-)
-
-# Measure-level TMSL properties with no Apache Ossie counterpart.
-_MEASURE_PASSTHROUGH_KEYS = (
-    "annotations",
-    "displayFolder",
-    "formatString",
-    "isHidden",
-    "kpi",
-)
-
-# Relationship-level TMSL properties with no Apache Ossie counterpart.
-_RELATIONSHIP_PASSTHROUGH_KEYS = (
-    "annotations",
-    "crossFilteringBehavior",
-    "joinOnDateBehavior",
-    "relyOnReferentialIntegrity",
-    "securityFilteringBehavior",
+_MEASURE_CONSUMED = frozenset({"name", "description", "dataType", "expression"})
+_RELATIONSHIP_CONSUMED = frozenset(
+    {
+        "name",
+        "fromTable",
+        "fromColumn",
+        "toTable",
+        "toColumn",
+        "fromCardinality",
+        "toCardinality",
+        "isActive",
+    }
 )
 
 
@@ -191,11 +161,14 @@ def _convert_table(table):
     unique_keys = []
     fields = []
     field_stashes = []
+    excluded_columns = []
     for column in table.get("columns") or []:
         if not isinstance(column, dict) or not column.get("name"):
             continue
-        # A rowNumber column is a storage-engine artifact with no user-visible data.
+        # A rowNumber column is a storage-engine artifact with no user-visible data. It
+        # is kept in the stash so an export can put it back.
         if column.get("type") == "rowNumber":
+            excluded_columns.append(column)
             continue
         field, column_stash = _convert_column(column, scope)
         fields.append(field)
@@ -218,7 +191,10 @@ def _convert_table(table):
     for field, column_stash in field_stashes:
         write_stash(field, column_stash)
 
-    write_stash(dataset, _passthrough(table, _TABLE_PASSTHROUGH_KEYS))
+    table_stash = _passthrough(table, _TABLE_CONSUMED)
+    if excluded_columns:
+        table_stash["excludedColumns"] = excluded_columns
+    write_stash(dataset, table_stash)
     return dataset
 
 
@@ -288,10 +264,24 @@ def _convert_column(column, table_scope):
     if datatype in TEMPORAL_DATATYPES or column.get("dataCategory") == "Time":
         field["dimension"] = {"is_time": True}
 
-    stash = _passthrough(column, _COLUMN_PASSTHROUGH_KEYS)
-    if column.get("type") and column["type"] != "calculated":
-        stash["type"] = column["type"]
+    stash = _passthrough(column, _COLUMN_CONSUMED)
+    if column.get("type") == "calculated":
+        # `type` is implied by the DAX expression on the way back out.
+        stash.pop("type", None)
+    if not _is_reversible_datatype(column.get("dataType"), datatype):
+        # The portable type does not map back to this exact TMSL type, so keep the
+        # original rather than let the export guess.
+        stash["dataType"] = column.get("dataType")
     return field, stash
+
+
+def _is_reversible_datatype(tmsl_type, datatype):
+    if not tmsl_type:
+        return True
+    if datatype == "Date" and tmsl_type == "dateTime":
+        # Date is re-exported as dateTime plus a date-only format string.
+        return True
+    return OSSIE_TO_TMSL_DATATYPE.get(datatype) == tmsl_type
 
 
 def _map_datatype(tmsl_type, format_string, scope):
@@ -357,7 +347,9 @@ def _convert_metrics(tables):
             if datatype:
                 metric["datatype"] = datatype
 
-            stash = _passthrough(measure, _MEASURE_PASSTHROUGH_KEYS)
+            stash = _passthrough(measure, _MEASURE_CONSUMED)
+            if not _is_reversible_datatype(measure.get("dataType"), datatype):
+                stash["dataType"] = measure.get("dataType")
             # Apache Ossie metrics are model-level; Power BI measures belong to a table.
             # The home table is recorded so an export can put the measure back.
             stash["table"] = table["name"]
@@ -431,15 +423,19 @@ def _convert_relationships(relationships, exported_names):
             "to_columns": [to_column],
         }
 
-        stash = _passthrough(relationship, _RELATIONSHIP_PASSTHROUGH_KEYS)
+        stash = _passthrough(relationship, _RELATIONSHIP_CONSUMED)
         if relationship.get("name"):
             stash["name"] = relationship["name"]
+        # Cardinalities are recorded whenever the source stated them, so the export
+        # reproduces the relationship exactly rather than falling back to the TMSL
+        # many-to-one default and silently widening it.
+        for key in ("fromCardinality", "toCardinality"):
+            if key in relationship:
+                stash[key] = relationship[key]
         if flipped:
             # Recorded so an export restores the original one-to-many orientation
             # instead of silently rewriting the model shape.
             stash["flipped"] = True
-            stash["fromCardinality"] = from_cardinality
-            stash["toCardinality"] = to_cardinality
         write_stash(converted_relationship, stash)
         converted.append(converted_relationship)
     return converted, excluded
@@ -450,17 +446,22 @@ def _convert_relationships(relationships, exported_names):
 # ---------------------------------------------------------------------------
 
 
-def _passthrough(obj, keys):
-    """Collect TMSL properties that have no Apache Ossie counterpart."""
-    return {key: obj[key] for key in keys if obj.get(key) not in (None, [], {})}
+def _passthrough(obj, consumed):
+    """Collect every TMSL property the Apache Ossie mapping did not consume."""
+    return {
+        key: value
+        for key, value in obj.items()
+        if key not in consumed and value not in (None, [], {})
+    }
 
 
 def _stash_model(semantic_model, bim_file, model, excluded_tables, excluded_relationships):
-    stash = _passthrough(model, _MODEL_PASSTHROUGH_KEYS)
-    if model.get("culture"):
-        stash["culture"] = model["culture"]
-    if bim_file.get("compatibilityLevel"):
-        stash["compatibilityLevel"] = bim_file["compatibilityLevel"]
+    stash = _passthrough(model, _MODEL_CONSUMED)
+    # Properties that sit outside the `model` object (compatibilityLevel and friends) are
+    # nested so they cannot collide with a model property of the same name.
+    document = _passthrough(bim_file, _DOCUMENT_CONSUMED)
+    if document:
+        stash["document"] = document
     if excluded_tables:
         stash["excludedTables"] = excluded_tables
         for table in excluded_tables:

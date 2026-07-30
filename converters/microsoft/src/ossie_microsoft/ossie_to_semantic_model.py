@@ -58,6 +58,12 @@ _PARTITION_PLACEHOLDER = (
     '    Source'
 )
 
+# Stash keys the export interprets rather than replays as TMSL properties.
+_STASH_CONTROL_KEYS = frozenset({"excludedTables", "excludedRelationships", "document"})
+_TABLE_CONTROL_KEYS = frozenset({"excludedColumns"})
+_RELATIONSHIP_CONTROL_KEYS = frozenset({"flipped", "name"})
+_MEASURE_CONTROL_KEYS = frozenset({"table", "name"})
+
 # Apache Ossie temporal types that Power BI cannot represent faithfully. Power BI stores
 # every temporal value as `dateTime`, so a time-of-day type gains a date part and a
 # timezone-aware type loses its offset.
@@ -117,20 +123,23 @@ def convert_ossie_to_semantic_model(document):
     # restored verbatim so a round trip reproduces the original model.
     tables.extend(stash.get("excludedTables") or [])
 
-    model = {"culture": stash.get("culture", "en-US"), "tables": tables}
+    model = {"tables": tables}
     if semantic_model.get("description"):
         model["description"] = semantic_model["description"]
     if relationships:
         model["relationships"] = relationships
-    for key in ("annotations", "cultures", "expressions", "perspectives", "queryGroups", "roles"):
-        if stash.get(key):
-            model[key] = stash[key]
+    # Everything else the import could not represent, replayed verbatim.
+    document_properties = stash.get("document") or {}
+    for key, value in stash.items():
+        if key not in _STASH_CONTROL_KEYS:
+            model[key] = value
+    model.setdefault("culture", "en-US")
 
-    return {
-        "name": semantic_model.get("name") or "semantic_model",
-        "compatibilityLevel": stash.get("compatibilityLevel", DEFAULT_COMPATIBILITY_LEVEL),
-        "model": model,
-    }
+    bim = {"name": semantic_model.get("name") or "semantic_model"}
+    bim.update(document_properties)
+    bim.setdefault("compatibilityLevel", DEFAULT_COMPATIBILITY_LEVEL)
+    bim["model"] = model
+    return bim
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +186,10 @@ def _convert_dataset(dataset):
     if dataset.get("description"):
         table["description"] = dataset["description"]
 
+    # rowNumber columns are storage-engine artifacts the import set aside.
+    for column in stash.get("excludedColumns") or []:
+        columns.insert(0, column)
+
     partitions = stash.get("partitions")
     if not partitions:
         source = dataset.get("source") or name
@@ -200,10 +213,9 @@ def _convert_dataset(dataset):
         ]
     table["partitions"] = partitions
 
-    for key in ("annotations", "dataCategory", "excludeFromModelRefresh", "hierarchies",
-                "isHidden", "showAsVariationsOnly"):
-        if key in stash:
-            table[key] = stash[key]
+    for key, value in stash.items():
+        if key not in _TABLE_CONTROL_KEYS and key != "partitions":
+            table[key] = value
     return table
 
 
@@ -258,10 +270,8 @@ def _convert_field(field, dataset_scope):
         if source_column is None:
             return None
         column["sourceColumn"] = source_column
-        if stash.get("type"):
-            column["type"] = stash["type"]
 
-    datatype = _map_datatype(field.get("datatype"), scope)
+    datatype = _map_datatype(field.get("datatype"), scope) if "dataType" not in stash else None
     if datatype:
         column["dataType"] = datatype
     if field.get("description"):
@@ -271,11 +281,9 @@ def _convert_field(field, dataset_scope):
         # format string. See `_common.is_date_only_format` for the inverse.
         column["formatString"] = DATE_ONLY_FORMAT
 
-    for key in ("annotations", "dataCategory", "displayFolder", "formatString",
-                "isAvailableInMdx", "isDefaultImage", "isDefaultLabel", "isHidden",
-                "isNullable", "sortByColumn", "summarizeBy"):
-        if key in stash:
-            column[key] = stash[key]
+    # Whatever the import could not represent, including a `dataType` the portable
+    # vocabulary could not reproduce.
+    column.update(stash)
     return column
 
 
@@ -362,12 +370,14 @@ def _apply_measures(tables, metrics):
         }
         if metric.get("description"):
             measure["description"] = metric["description"]
-        datatype = _map_datatype(metric.get("datatype"), scope)
+        datatype = (
+            _map_datatype(metric.get("datatype"), scope) if "dataType" not in stash else None
+        )
         if datatype:
             measure["dataType"] = datatype
-        for key in ("annotations", "displayFolder", "formatString", "isHidden", "kpi"):
-            if key in stash:
-                measure[key] = stash[key]
+        for key, value in stash.items():
+            if key not in _MEASURE_CONTROL_KEYS:
+                measure[key] = value
         table.setdefault("measures", []).append(measure)
 
 
@@ -403,8 +413,6 @@ def _convert_relationships(relationships, table_columns):
                                 to_table, to_column):
             continue
 
-        from_cardinality = stash.get("fromCardinality", "many")
-        to_cardinality = stash.get("toCardinality", "one")
         if stash.get("flipped"):
             # Restore the original orientation the import normalized away.
             from_table, to_table = to_table, from_table
@@ -417,14 +425,9 @@ def _convert_relationships(relationships, table_columns):
             "toTable": to_table,
             "toColumn": to_column,
         }
-        if from_cardinality != "many":
-            tmsl["fromCardinality"] = from_cardinality
-        if to_cardinality != "one":
-            tmsl["toCardinality"] = to_cardinality
-        for key in ("annotations", "crossFilteringBehavior", "joinOnDateBehavior",
-                    "relyOnReferentialIntegrity", "securityFilteringBehavior"):
-            if key in stash:
-                tmsl[key] = stash[key]
+        for key, value in stash.items():
+            if key not in _RELATIONSHIP_CONTROL_KEYS:
+                tmsl[key] = value
         converted.append(prune(tmsl))
     return converted
 
