@@ -15,9 +15,10 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Command-line interface for the Microsoft Power BI -> Apache Ossie converter.
+"""Command-line interface for the Microsoft Power BI <-> Apache Ossie converter.
 
-    ossie-microsoft import -i model.bim [-o model.yaml]
+    ossie-microsoft import -i model.bim   [-o model.yaml]
+    ossie-microsoft export -i model.yaml  [-o model.bim]
 
 With no ``-o``, the result is written to stdout.
 """
@@ -26,6 +27,10 @@ import argparse
 import json
 import sys
 
+import yaml
+
+from ._common import ConversionError
+from .ossie_to_semantic_model import convert_ossie_to_semantic_model
 from .semantic_model_to_ossie import convert_semantic_model_to_ossie
 
 
@@ -43,16 +48,35 @@ def _build_parser():
     )
     imp.add_argument("-i", "--input", required=True, help="model.bim (TMSL JSON) file")
     imp.add_argument("-o", "--output", help="output Apache Ossie YAML (default: stdout)")
+
+    exp = sub.add_parser(
+        "export", help="Apache Ossie semantic model -> Power BI semantic model (TMSL model.bim)"
+    )
+    exp.add_argument("-i", "--input", required=True, help="Apache Ossie YAML file")
+    exp.add_argument("-o", "--output", help="output model.bim (default: stdout)")
     return parser
+
+
+def _run_import(args):
+    with open(args.input, encoding="utf-8-sig") as fh:
+        return convert_semantic_model_to_ossie(json.load(fh))
+
+
+def _run_export(args):
+    with open(args.input, encoding="utf-8-sig") as fh:
+        document = yaml.safe_load(fh)
+    # Power BI writes model.bim as UTF-8 JSON with non-ASCII characters left as-is.
+    return json.dumps(
+        convert_ossie_to_semantic_model(document), indent=2, ensure_ascii=False
+    ) + "\n"
 
 
 def main(argv=None):
     args = _build_parser().parse_args(argv)
+    handler = _run_import if args.command == "import" else _run_export
     try:
-        with open(args.input, encoding="utf-8-sig") as fh:
-            bim_file = json.load(fh)
-        out = convert_semantic_model_to_ossie(bim_file)
-    except (TypeError, ValueError, OSError) as e:
+        out = handler(args)
+    except (ConversionError, TypeError, ValueError, OSError, yaml.YAMLError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
 

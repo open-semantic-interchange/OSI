@@ -289,9 +289,6 @@ def _convert_column(column, table_scope):
         field["dimension"] = {"is_time": True}
 
     stash = _passthrough(column, _COLUMN_PASSTHROUGH_KEYS)
-    source_column = column.get("sourceColumn")
-    if source_column and source_column != name:
-        stash["sourceColumn"] = source_column
     if column.get("type") and column["type"] != "calculated":
         stash["type"] = column["type"]
     return field, stash

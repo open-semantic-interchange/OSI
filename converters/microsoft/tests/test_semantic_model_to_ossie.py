@@ -64,11 +64,17 @@ def _expression(node, dialect):
 # --- public API ------------------------------------------------------------
 
 
-def test_package_exports_the_converter():
+def test_package_exports_the_converters():
     import ossie_microsoft
 
-    assert ossie_microsoft.__all__ == ["convert_semantic_model_to_ossie"]
+    assert ossie_microsoft.__all__ == [
+        "ConversionError",
+        "build_ossie_document",
+        "convert_ossie_to_semantic_model",
+        "convert_semantic_model_to_ossie",
+    ]
     assert callable(ossie_microsoft.convert_semantic_model_to_ossie)
+    assert callable(ossie_microsoft.convert_ossie_to_semantic_model)
 
 
 def test_cli_writes_ossie_yaml(tmp_path):
