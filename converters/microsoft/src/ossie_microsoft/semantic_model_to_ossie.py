@@ -17,60 +17,117 @@
 
 """Convert a Power BI semantic model (``model.bim`` / TMSL) to Apache Ossie (OSI).
 
-Only concepts that exist in both formats are populated: model name and
-description, tables -> datasets, columns -> fields, measures -> metrics and
-relationships -> relationships. Power BI specifics without an OSI counterpart
-(format strings, display folders, perspectives, RLS, KPIs, hierarchies,
-storage/partition modes, cross-filter direction, ...) are dropped.
+Concepts that exist in both formats are mapped to the Apache Ossie core: model name and
+description, tables -> datasets, columns -> fields, measures -> metrics, relationships ->
+relationships.
+
+Power BI constructs with no Apache Ossie counterpart -- format strings, display folders,
+perspectives, row-level security, KPIs, hierarchies, partitions, calculation groups,
+cross-filter direction and so on -- are not discarded. They are preserved verbatim in a
+``POWER_BI`` ``custom_extensions`` entry so that
+:mod:`ossie_microsoft.ossie_to_semantic_model` can rebuild them, per the round-trip
+guidance in ``converters/README.md``. Anything that genuinely cannot be represented is
+reported through :func:`ossie_microsoft._common.warn`.
 """
 
 import re
 
 import yaml
 
-OSSIE_VERSION = "0.2.0.dev0"
-DIALECT_DAX = "DAX"
-DIALECT_SQL = "ANSI_SQL"
-
-# Power BI (TOM) data types -> OSI portable data types. Types with no portable
-# equivalent ("automatic", "unknown", "variant") are left unmapped.
-_DATATYPES = {
-    "string": "String",
-    "int64": "Integer",
-    "decimal": "Decimal",
-    "double": "Float",
-    "boolean": "Boolean",
-    "dateTime": "DateTime",
-    "date": "Date",
-    "time": "Time",
-    "binary": "Opaque",
-}
-
-_TEMPORAL_DATATYPES = frozenset({"Date", "Time", "DateTime", "DateTimeTz"})
-
-# Auto-generated date tables Power BI creates behind the scenes for time
-# intelligence; they are an implementation detail, not part of the model.
-_AUTO_DATE_TABLE_RE = re.compile(r"^(LocalDateTable_|DateTableTemplate_)")
+from ._common import (
+    AUTO_DATE_TABLE_RE,
+    DIALECT_ANSI,
+    DIALECT_DAX,
+    OSSIE_VERSION,
+    TEMPORAL_DATATYPES,
+    TMSL_TO_OSSIE_DATATYPE,
+    TMSL_UNTYPED,
+    is_date_only_format,
+    make_expression,
+    text,
+    warn,
+    write_stash,
+)
 
 # `Schema="dbo", Item="Sales"` navigation in a Power Query (M) partition.
 _M_ITEM_RE = re.compile(r'Item\s*=\s*"([^"]+)"')
 _M_SCHEMA_RE = re.compile(r'Schema\s*=\s*"([^"]+)"')
 _M_DATABASE_RE = re.compile(r'Sql\.Databases?\s*\(\s*"[^"]*"\s*,\s*"([^"]+)"')
 
+# Model-level TMSL collections with no Apache Ossie counterpart. Preserved verbatim in
+# the model stash so a round trip can restore them.
+_MODEL_PASSTHROUGH_KEYS = (
+    "annotations",
+    "cultures",
+    "expressions",
+    "perspectives",
+    "queryGroups",
+    "roles",
+)
 
-def convert_semantic_model_to_ossie(bim_file: dict) -> str:
-    """Convert a parsed ``model.bim`` document into an OSI semantic model.
+# Table-level TMSL properties with no Apache Ossie counterpart.
+_TABLE_PASSTHROUGH_KEYS = (
+    "annotations",
+    "dataCategory",
+    "excludeFromModelRefresh",
+    "hierarchies",
+    "isHidden",
+    "partitions",
+    "showAsVariationsOnly",
+)
+
+# Column-level TMSL properties with no Apache Ossie counterpart.
+_COLUMN_PASSTHROUGH_KEYS = (
+    "annotations",
+    "dataCategory",
+    "displayFolder",
+    "formatString",
+    "isAvailableInMdx",
+    "isDefaultImage",
+    "isDefaultLabel",
+    "isHidden",
+    "isNullable",
+    "sortByColumn",
+    "summarizeBy",
+)
+
+# Measure-level TMSL properties with no Apache Ossie counterpart.
+_MEASURE_PASSTHROUGH_KEYS = (
+    "annotations",
+    "displayFolder",
+    "formatString",
+    "isHidden",
+    "kpi",
+)
+
+# Relationship-level TMSL properties with no Apache Ossie counterpart.
+_RELATIONSHIP_PASSTHROUGH_KEYS = (
+    "annotations",
+    "crossFilteringBehavior",
+    "joinOnDateBehavior",
+    "relyOnReferentialIntegrity",
+    "securityFilteringBehavior",
+)
+
+
+def convert_semantic_model_to_ossie(bim_file):
+    """Convert a parsed ``model.bim`` document into an Apache Ossie semantic model.
 
     Args:
         bim_file: The deserialized contents of a ``model.bim`` file (TMSL).
 
     Returns:
-        The OSI document serialized as YAML.
+        The Apache Ossie document serialized as YAML.
+
+    Raises:
+        TypeError: if `bim_file` is not a parsed TMSL document.
+        ValueError: if the document has no ``model`` object.
     """
-    return _dump_yaml(_build_document(bim_file))
+    return dump_yaml(build_ossie_document(bim_file))
 
 
-def _build_document(bim_file: dict) -> dict:
+def build_ossie_document(bim_file):
+    """Convert a parsed ``model.bim`` document into an Apache Ossie document (dict)."""
     if not isinstance(bim_file, dict):
         raise TypeError("bim_file must be a parsed model.bim document (dict)")
 
@@ -78,17 +135,23 @@ def _build_document(bim_file: dict) -> dict:
     if not isinstance(model, dict):
         raise ValueError("model.bim is missing the required 'model' object")
 
-    tables = [t for t in model.get("tables") or [] if _is_exported_table(t)]
+    all_tables = [
+        t for t in model.get("tables") or [] if isinstance(t, dict) and t.get("name")
+    ]
+    tables = [t for t in all_tables if _is_exported_table(t)]
+    excluded_tables = [t for t in all_tables if not _is_exported_table(t)]
     exported_names = {t["name"] for t in tables}
 
     semantic_model = {"name": bim_file.get("name") or "semantic_model"}
     description = model.get("description") or bim_file.get("description")
     if description:
-        semantic_model["description"] = _text(description)
+        semantic_model["description"] = text(description)
 
     semantic_model["datasets"] = [_convert_table(t) for t in tables]
 
-    relationships = _convert_relationships(model.get("relationships") or [], exported_names)
+    relationships, excluded_relationships = _convert_relationships(
+        model.get("relationships") or [], exported_names
+    )
     if relationships:
         semantic_model["relationships"] = relationships
 
@@ -96,33 +159,47 @@ def _build_document(bim_file: dict) -> dict:
     if metrics:
         semantic_model["metrics"] = metrics
 
+    _stash_model(semantic_model, bim_file, model, excluded_tables, excluded_relationships)
+
     return {"version": OSSIE_VERSION, "semantic_model": [semantic_model]}
 
 
-def _is_exported_table(table) -> bool:
-    if not isinstance(table, dict) or not table.get("name"):
-        return False
+# ---------------------------------------------------------------------------
+# Tables -> datasets
+# ---------------------------------------------------------------------------
+
+
+def _is_exported_table(table):
+    """Whether a TMSL table becomes an Apache Ossie dataset.
+
+    Excluded tables are still preserved verbatim in the model stash; they are simply not
+    part of the vendor-neutral model.
+    """
     if table.get("isPrivate"):
         return False
     # A calculation group is a DAX calculation modifier, not a logical dataset.
     if table.get("calculationGroup"):
         return False
-    return not _AUTO_DATE_TABLE_RE.match(table["name"])
+    return not AUTO_DATE_TABLE_RE.match(table["name"])
 
 
-def _convert_table(table: dict) -> dict:
+def _convert_table(table):
     dataset = {"name": table["name"], "source": _table_source(table)}
+    scope = f"table '{table['name']}'"
 
     primary_key = []
     unique_keys = []
     fields = []
+    field_stashes = []
     for column in table.get("columns") or []:
         if not isinstance(column, dict) or not column.get("name"):
             continue
         # A rowNumber column is a storage-engine artifact with no user-visible data.
         if column.get("type") == "rowNumber":
             continue
-        fields.append(_convert_column(column))
+        field, column_stash = _convert_column(column, scope)
+        fields.append(field)
+        field_stashes.append((field, column_stash))
         if column.get("isKey"):
             primary_key.append(column["name"])
         elif column.get("isUnique"):
@@ -133,26 +210,36 @@ def _convert_table(table: dict) -> dict:
     if unique_keys:
         dataset["unique_keys"] = unique_keys
     if table.get("description"):
-        dataset["description"] = _text(table["description"])
+        dataset["description"] = text(table["description"])
     if fields:
         dataset["fields"] = fields
+
+    # Stashes are written last so `custom_extensions` sorts after the core properties.
+    for field, column_stash in field_stashes:
+        write_stash(field, column_stash)
+
+    write_stash(dataset, _passthrough(table, _TABLE_PASSTHROUGH_KEYS))
     return dataset
 
 
-def _table_source(table: dict) -> str:
-    """Best-effort physical source for a table, falling back to its name."""
+def _table_source(table):
+    """Best-effort physical source for a table, falling back to its name.
+
+    The exact partition definition is preserved in the dataset stash, so this only has
+    to be a human-meaningful identifier rather than a lossless one.
+    """
     for partition in table.get("partitions") or []:
         source = partition.get("source") if isinstance(partition, dict) else None
         if not isinstance(source, dict):
             continue
         source_type = source.get("type")
         if source_type == "query" and source.get("query"):
-            return _text(source["query"]).strip()
+            return text(source["query"]).strip()
         if source_type == "entity" and source.get("entityName"):
             schema = source.get("schemaName")
             return f"{schema}.{source['entityName']}" if schema else source["entityName"]
         if source_type in ("m", "calculated") and source.get("expression"):
-            expression = _text(source["expression"]).strip()
+            expression = text(source["expression"]).strip()
             if source_type == "calculated":
                 return expression
             qualified = _qualified_name_from_m(expression)
@@ -161,7 +248,7 @@ def _table_source(table: dict) -> str:
     return table["name"]
 
 
-def _qualified_name_from_m(expression: str):
+def _qualified_name_from_m(expression):
     item = _M_ITEM_RE.search(expression)
     if not item:
         return None
@@ -175,93 +262,224 @@ def _qualified_name_from_m(expression: str):
     return ".".join(parts)
 
 
-def _convert_column(column: dict) -> dict:
+# ---------------------------------------------------------------------------
+# Columns -> fields
+# ---------------------------------------------------------------------------
+
+
+def _convert_column(column, table_scope):
     name = column["name"]
+    scope = f"{table_scope} column '{name}'"
+
     if column.get("type") == "calculated":
-        expression = _expression(_text(column.get("expression", "")).strip(), DIALECT_DAX)
+        # A calculated column is DAX. It is carried across as DAX rather than rewritten
+        # into SQL, so no expression semantics are invented.
+        expression = make_expression(text(column.get("expression", "")).strip(), DIALECT_DAX)
     else:
-        expression = _expression(column.get("sourceColumn") or name, DIALECT_SQL)
+        expression = make_expression(column.get("sourceColumn") or name, DIALECT_ANSI)
 
     field = {"name": name, "expression": expression}
-    datatype = _DATATYPES.get(column.get("dataType"))
+
+    datatype = _map_datatype(column.get("dataType"), column.get("formatString"), scope)
     if datatype:
         field["datatype"] = datatype
     if column.get("description"):
-        field["description"] = _text(column["description"])
-    if datatype in _TEMPORAL_DATATYPES or column.get("dataCategory") == "Time":
+        field["description"] = text(column["description"])
+    if datatype in TEMPORAL_DATATYPES or column.get("dataCategory") == "Time":
         field["dimension"] = {"is_time": True}
-    return field
+
+    stash = _passthrough(column, _COLUMN_PASSTHROUGH_KEYS)
+    source_column = column.get("sourceColumn")
+    if source_column and source_column != name:
+        stash["sourceColumn"] = source_column
+    if column.get("type") and column["type"] != "calculated":
+        stash["type"] = column["type"]
+    return field, stash
 
 
-def _convert_metrics(tables: list) -> list:
+def _map_datatype(tmsl_type, format_string, scope):
+    """Map a TMSL ``dataType`` to an Apache Ossie portable data type.
+
+    Returns None when no portable type applies, which is a legitimate outcome: the
+    Apache Ossie ``datatype`` field is optional and inventing a type would be worse than
+    omitting one.
+    """
+    if not tmsl_type:
+        return None
+    if tmsl_type in TMSL_UNTYPED:
+        # `automatic`/`unknown` mean the engine has not resolved a type yet.
+        warn(scope, f"data type '{tmsl_type}' carries no type information; datatype omitted")
+        return None
+
+    datatype = TMSL_TO_OSSIE_DATATYPE.get(tmsl_type)
+    if datatype is None:
+        warn(scope, f"unrecognized TMSL data type '{tmsl_type}'; datatype omitted")
+        return None
+
+    if tmsl_type in ("binary", "variant"):
+        warn(scope, f"'{tmsl_type}' has no portable equivalent; mapped to 'Opaque'")
+    elif tmsl_type == "dateTime" and is_date_only_format(format_string):
+        # Power BI has no date-only data type; a date-only format string is the only
+        # signal that the column is conceptually a Date.
+        return "Date"
+    return datatype
+
+
+# ---------------------------------------------------------------------------
+# Measures -> metrics
+# ---------------------------------------------------------------------------
+
+
+def _convert_metrics(tables):
     metrics = []
     seen = set()
     for table in tables:
         for measure in table.get("measures") or []:
             if not isinstance(measure, dict) or not measure.get("name"):
                 continue
-            expression = _text(measure.get("expression", "")).strip()
+            scope = f"table '{table['name']}' measure '{measure.get('name')}'"
+            expression = text(measure.get("expression", "")).strip()
             if not expression:
+                warn(scope, "measure has no expression; skipped")
                 continue
-            # Measure names are unique per model in Power BI; qualify on the rare clash.
+
+            # Measure names are unique per model in Power BI, but a qualified name may
+            # still be needed if a caller merged models.
             name = measure["name"]
             if name in seen:
                 name = f"{table['name']}.{name}"
+                warn(scope, f"duplicate measure name; renamed to '{name}'")
             seen.add(name)
 
-            metric = {"name": name, "expression": _expression(expression, DIALECT_DAX)}
+            metric = {"name": name, "expression": make_expression(expression, DIALECT_DAX)}
             if measure.get("description"):
-                metric["description"] = _text(measure["description"])
-            datatype = _DATATYPES.get(measure.get("dataType"))
+                metric["description"] = text(measure["description"])
+            datatype = _map_datatype(
+                measure.get("dataType"), measure.get("formatString"), scope
+            )
             if datatype:
                 metric["datatype"] = datatype
+
+            stash = _passthrough(measure, _MEASURE_PASSTHROUGH_KEYS)
+            # Apache Ossie metrics are model-level; Power BI measures belong to a table.
+            # The home table is recorded so an export can put the measure back.
+            stash["table"] = table["name"]
+            if name != measure["name"]:
+                stash["name"] = measure["name"]
+            write_stash(metric, stash)
             metrics.append(metric)
     return metrics
 
 
-def _convert_relationships(relationships: list, exported_names: set) -> list:
+# ---------------------------------------------------------------------------
+# Relationships
+# ---------------------------------------------------------------------------
+
+
+def _convert_relationships(relationships, exported_names):
     converted = []
+    excluded = []
     seen = set()
     for relationship in relationships:
         if not isinstance(relationship, dict):
             continue
-        # OSI has no notion of an inactive relationship; keeping one would make it
-        # look like an active join path.
-        if relationship.get("isActive") is False:
-            continue
+        scope = f"relationship '{relationship.get('name', '<unnamed>')}'"
 
         from_table = relationship.get("fromTable")
         from_column = relationship.get("fromColumn")
         to_table = relationship.get("toTable")
         to_column = relationship.get("toColumn")
         if not all((from_table, from_column, to_table, to_column)):
+            warn(scope, "relationship is missing an endpoint; skipped")
+            excluded.append(relationship)
             continue
+
+        # Apache Ossie has no notion of an inactive relationship; keeping one would make
+        # it look like an active join path.
+        if relationship.get("isActive") is False:
+            warn(scope, "inactive relationships have no Apache Ossie counterpart; skipped")
+            excluded.append(relationship)
+            continue
+
         if from_table not in exported_names or to_table not in exported_names:
+            warn(scope, "relationship references a table that is not exported; skipped")
+            excluded.append(relationship)
             continue
 
         from_cardinality = relationship.get("fromCardinality", "many")
         to_cardinality = relationship.get("toCardinality", "one")
         if from_cardinality == "many" and to_cardinality == "many":
-            # OSI relationships are many-to-one or one-to-one only.
+            # Apache Ossie relationships are many-to-one or one-to-one only.
+            warn(scope, "many-to-many relationships have no Apache Ossie counterpart; skipped")
+            excluded.append(relationship)
             continue
-        if from_cardinality == "one" and to_cardinality == "many":
+
+        flipped = from_cardinality == "one" and to_cardinality == "many"
+        if flipped:
             from_table, to_table = to_table, from_table
             from_column, to_column = to_column, from_column
 
         name = f"{from_table}_{from_column}_to_{to_table}_{to_column}"
         if name in seen:
+            warn(scope, f"duplicate relationship '{name}'; skipped")
+            excluded.append(relationship)
             continue
         seen.add(name)
-        converted.append(
-            {
-                "name": name,
-                "from": from_table,
-                "to": to_table,
-                "from_columns": [from_column],
-                "to_columns": [to_column],
-            }
-        )
-    return converted
+
+        converted_relationship = {
+            "name": name,
+            "from": from_table,
+            "to": to_table,
+            "from_columns": [from_column],
+            "to_columns": [to_column],
+        }
+
+        stash = _passthrough(relationship, _RELATIONSHIP_PASSTHROUGH_KEYS)
+        if relationship.get("name"):
+            stash["name"] = relationship["name"]
+        if flipped:
+            # Recorded so an export restores the original one-to-many orientation
+            # instead of silently rewriting the model shape.
+            stash["flipped"] = True
+            stash["fromCardinality"] = from_cardinality
+            stash["toCardinality"] = to_cardinality
+        write_stash(converted_relationship, stash)
+        converted.append(converted_relationship)
+    return converted, excluded
+
+
+# ---------------------------------------------------------------------------
+# Stash helpers
+# ---------------------------------------------------------------------------
+
+
+def _passthrough(obj, keys):
+    """Collect TMSL properties that have no Apache Ossie counterpart."""
+    return {key: obj[key] for key in keys if obj.get(key) not in (None, [], {})}
+
+
+def _stash_model(semantic_model, bim_file, model, excluded_tables, excluded_relationships):
+    stash = _passthrough(model, _MODEL_PASSTHROUGH_KEYS)
+    if model.get("culture"):
+        stash["culture"] = model["culture"]
+    if bim_file.get("compatibilityLevel"):
+        stash["compatibilityLevel"] = bim_file["compatibilityLevel"]
+    if excluded_tables:
+        stash["excludedTables"] = excluded_tables
+        for table in excluded_tables:
+            warn(
+                f"table '{table['name']}'",
+                "table is private, a calculation group, or an auto-generated date table; "
+                "excluded from the Apache Ossie model and preserved in custom_extensions",
+            )
+    if excluded_relationships:
+        stash["excludedRelationships"] = excluded_relationships
+    write_stash(semantic_model, stash)
+
+
+# ---------------------------------------------------------------------------
+# YAML output
+# ---------------------------------------------------------------------------
 
 
 class _OssieDumper(yaml.SafeDumper):
@@ -277,7 +495,8 @@ def _represent_str(dumper, data):
 _OssieDumper.add_representer(str, _represent_str)
 
 
-def _dump_yaml(document: dict) -> str:
+def dump_yaml(document):
+    """Serialize an Apache Ossie document to YAML."""
     return yaml.dump(
         document,
         Dumper=_OssieDumper,
@@ -288,12 +507,4 @@ def _dump_yaml(document: dict) -> str:
     )
 
 
-def _expression(expression: str, dialect: str) -> dict:
-    return {"dialects": [{"dialect": dialect, "expression": expression}]}
-
-
-def _text(value) -> str:
-    """TMSL allows multi-line strings to be stored as an array of lines."""
-    if isinstance(value, list):
-        return "\n".join(str(line) for line in value)
-    return str(value)
+__all__ = ["convert_semantic_model_to_ossie", "build_ossie_document"]
