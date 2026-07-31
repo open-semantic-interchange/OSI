@@ -30,8 +30,17 @@ rather than guessing.
 """
 
 import json
+import logging
 import re
 import warnings
+
+# Every lossy step is reported twice, on purpose, because the two channels answer
+# different questions. A `UserWarning` is the programmatic contract: a caller can raise
+# `warnings.simplefilter("error")` and get a hard guarantee the conversion was lossless.
+# A log record is the operational channel: it carries the same message to whatever
+# handler an embedding application configured, without that application having to
+# install a warning filter.
+LOGGER = logging.getLogger("ossie_microsoft")
 
 # Apache Ossie semantic model spec version this converter targets (see core-spec).
 #
@@ -62,6 +71,51 @@ AUTO_DATE_TABLE_RE = re.compile(r"^(LocalDateTable_|DateTableTemplate_)")
 # ANSI_SQL field expression is a plain column reference (which maps to a TMSL
 # `sourceColumn`) or a computed expression (which does not).
 IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+# ---------------------------------------------------------------------------
+# Constructs neither model can represent
+# ---------------------------------------------------------------------------
+#
+# Round-trip losslessness (Power BI -> Apache Ossie -> Power BI) is guaranteed by the
+# stash, so nothing below is lost when the destination is Power BI again. But an Apache
+# Ossie document is meant to be read by tools that are not Power BI, and to those tools
+# these constructs are simply absent. Reporting them is the difference between "Apache
+# Ossie models this" and "this survived in an opaque vendor blob".
+#
+# These catalogues list constructs with *semantic* meaning -- security, navigation,
+# calculation, localization. Purely presentational TMSL properties (`isHidden`,
+# `displayFolder`, `formatString`) are preserved just as faithfully but are not reported,
+# because a warning on every cosmetic property would bury the ones that matter.
+TMSL_UNSUPPORTED_MODEL = {
+    "roles": "row-level security roles",
+    "perspectives": "perspectives",
+    "cultures": "translations and linguistic metadata",
+    "expressions": "shared Power Query expressions and parameters",
+    "dataSources": "data source definitions",
+    "queryGroups": "Power Query group folders",
+}
+TMSL_UNSUPPORTED_TABLE = {
+    "hierarchies": "hierarchies",
+    "calculationGroup": "a calculation group",
+    "refreshPolicy": "an incremental refresh policy",
+    "defaultDetailRowsDefinition": "a detail rows definition",
+}
+TMSL_UNSUPPORTED_COLUMN = {
+    "variations": "date table variations",
+    "sortByColumn": "a sort-by-column",
+}
+TMSL_UNSUPPORTED_MEASURE = {
+    "kpi": "a KPI",
+    "detailRowsDefinition": "a detail rows definition",
+}
+
+# Apache Ossie constructs with no Power BI counterpart. Unlike the tables above, these
+# genuinely cannot be carried across: a TMSL document has nowhere to put them, so they
+# are reported and dropped rather than preserved.
+OSSIE_UNSUPPORTED = {
+    "ai_context": "AI context",
+    "label": "a display label",
+}
 
 # ---------------------------------------------------------------------------
 # Data types
@@ -144,9 +198,40 @@ def warn(scope, msg):
 
     Every construct the converter cannot carry across faithfully goes through here, so
     a caller can turn warnings into errors (``warnings.simplefilter("error")``) and get
-    a hard guarantee that a conversion was lossless.
+    a hard guarantee that a conversion was lossless. The same message is also logged to
+    the ``ossie_microsoft`` logger for applications that consume a log rather than
+    warning filters.
+
+    Args:
+        scope: Where the loss happened, e.g. ``table 'Sales'`` -- always specific enough
+            to locate the construct in the source model.
+        msg: What was lost or changed, and what the converter did instead.
     """
-    warnings.warn(f"[{scope}] {msg}")
+    message = f"[{scope}] {msg}"
+    LOGGER.warning(message)
+    # stacklevel=2 points the warning at the conversion call site rather than at this
+    # helper, so `-W error` tracebacks name the code that triggered the loss.
+    warnings.warn(message, stacklevel=2)
+
+
+def warn_unsupported(scope, present, catalogue, counterpart, fate):
+    """Report each construct in `present` that this converter cannot represent.
+
+    Args:
+        scope: Where the constructs were found.
+        present: An iterable of keys actually present on the source object.
+        catalogue: Maps a key to a human description of the construct.
+        counterpart: The model that has nowhere to put it, e.g. "Apache Ossie".
+        fate: What happened to it, e.g. "preserved for round trip but not represented
+            in the Apache Ossie document".
+
+    Returns:
+        The sorted list of reported keys, for callers that want to record them.
+    """
+    reported = sorted(set(present) & set(catalogue))
+    for key in reported:
+        warn(scope, f"{catalogue[key]} ('{key}') has no {counterpart} counterpart; {fate}")
+    return reported
 
 
 def text(value):

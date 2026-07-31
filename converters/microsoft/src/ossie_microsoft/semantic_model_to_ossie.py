@@ -43,12 +43,24 @@ from ._common import (
     OSSIE_VERSION,
     TEMPORAL_DATATYPES,
     TMSL_TO_OSSIE_DATATYPE,
+    TMSL_UNSUPPORTED_COLUMN,
+    TMSL_UNSUPPORTED_MEASURE,
+    TMSL_UNSUPPORTED_MODEL,
+    TMSL_UNSUPPORTED_TABLE,
     TMSL_UNTYPED,
     is_date_only_format,
     make_expression,
     text,
     warn,
+    warn_unsupported,
     write_stash,
+)
+
+# What happens to a TMSL construct Apache Ossie cannot express: it survives a round trip
+# back to Power BI, but it is invisible to any other consumer of the document.
+_PRESERVED = (
+    "preserved in the Power BI stash for round trip, but not represented in the "
+    "Apache Ossie document"
 )
 
 # `Schema="dbo", Item="Sales"` navigation in a Power Query (M) partition.
@@ -114,6 +126,7 @@ def build_ossie_document(bim_file):
     exported_names = {t["name"] for t in tables}
 
     semantic_model = {"name": bim_file.get("name") or "semantic_model"}
+    warn_unsupported("model", model, TMSL_UNSUPPORTED_MODEL, "Apache Ossie", _PRESERVED)
     description = model.get("description") or bim_file.get("description")
     if description:
         semantic_model["description"] = text(description)
@@ -157,6 +170,7 @@ def _convert_table(table):
     dataset = {"name": table["name"], "source": _table_source(table)}
     scope = f"table '{table['name']}'"
 
+    warn_unsupported(scope, table, TMSL_UNSUPPORTED_TABLE, "Apache Ossie", _PRESERVED)
     primary_key = []
     unique_keys = []
     fields = []
@@ -247,6 +261,8 @@ def _convert_column(column, table_scope):
     name = column["name"]
     scope = f"{table_scope} column '{name}'"
 
+    warn_unsupported(scope, column, TMSL_UNSUPPORTED_COLUMN, "Apache Ossie", _PRESERVED)
+
     if column.get("type") == "calculated":
         # A calculated column is DAX. It is carried across as DAX rather than rewritten
         # into SQL, so no expression semantics are invented.
@@ -332,6 +348,7 @@ def _convert_metrics(tables):
             if not isinstance(measure, dict) or not measure.get("name"):
                 continue
             scope = f"table '{table['name']}' measure '{measure.get('name')}'"
+            warn_unsupported(scope, measure, TMSL_UNSUPPORTED_MEASURE, "Apache Ossie", _PRESERVED)
             expression = text(measure.get("expression", "")).strip()
             if not expression:
                 warn(scope, "measure has no expression; skipped")

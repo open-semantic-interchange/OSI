@@ -32,12 +32,13 @@ produce a model that looks correct and computes the wrong answer.
 """
 
 from ._common import (
+    DATE_ONLY_FORMAT,
     DEFAULT_COMPATIBILITY_LEVEL,
     DIALECT_ANSI,
     DIALECT_DAX,
-    DATE_ONLY_FORMAT,
     IDENTIFIER_RE,
     OSSIE_TO_TMSL_DATATYPE,
+    OSSIE_UNSUPPORTED,
     OSSIE_VERSION,
     TMSL_TO_OSSIE_DATATYPE,
     ConversionError,
@@ -46,7 +47,12 @@ from ._common import (
     prune,
     read_stash,
     warn,
+    warn_unsupported,
 )
+
+# What happens to an Apache Ossie construct Power BI has nowhere to put: unlike the
+# import direction, there is no stash on a TMSL document, so it is genuinely dropped.
+_DROPPED = "dropped, because a Power BI semantic model has nowhere to record it"
 
 # Placeholder partition for a dataset whose Power BI partition was not preserved. It is
 # deliberately an `error` expression: a refresh fails loudly with an actionable message
@@ -114,6 +120,7 @@ def convert_ossie_to_semantic_model(document):
 
     stash = read_stash(semantic_model)
     _warn_foreign_extensions("model", semantic_model)
+    warn_unsupported("model", semantic_model, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
 
     tables, table_columns = _convert_datasets(semantic_model.get("datasets") or [])
     _apply_measures(tables, semantic_model.get("metrics") or [])
@@ -174,6 +181,7 @@ def _convert_dataset(dataset):
     scope = f"dataset '{name}'"
     stash = read_stash(dataset)
     _warn_foreign_extensions(scope, dataset)
+    warn_unsupported(scope, dataset, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
 
     key_columns = _key_columns(dataset, scope)
     unique_columns = _unique_columns(dataset, scope)
@@ -267,6 +275,7 @@ def _convert_field(field, dataset_scope):
     scope = f"{dataset_scope} field '{name}'"
     stash = read_stash(field)
     _warn_foreign_extensions(scope, field)
+    warn_unsupported(scope, field, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
 
     column = {"name": name}
     expressions = dialect_expressions(field.get("expression"))
@@ -372,6 +381,7 @@ def _apply_measures(tables, metrics):
         scope = f"metric '{metric['name']}'"
         stash = read_stash(metric)
         _warn_foreign_extensions(scope, metric)
+        warn_unsupported(scope, metric, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
 
         expressions = dialect_expressions(metric.get("expression"))
         expression = expressions.get(DIALECT_DAX)
@@ -430,6 +440,7 @@ def _convert_relationships(relationships, table_columns):
         scope = f"relationship '{relationship.get('name', '<unnamed>')}'"
         stash = read_stash(relationship)
         _warn_foreign_extensions(scope, relationship)
+        warn_unsupported(scope, relationship, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
 
         from_columns = relationship.get("from_columns") or []
         to_columns = relationship.get("to_columns") or []

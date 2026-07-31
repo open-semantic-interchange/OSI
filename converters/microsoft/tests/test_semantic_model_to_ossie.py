@@ -18,14 +18,16 @@
 """Tests for the Power BI (TMSL ``model.bim``) -> Apache Ossie converter."""
 
 import json
+import logging
 import warnings
 from pathlib import Path
 
 import pytest
 import yaml
 
-from ossie_microsoft import convert_semantic_model_to_ossie
+from ossie_microsoft import convert_ossie_to_semantic_model, convert_semantic_model_to_ossie
 from ossie_microsoft._common import VENDOR, read_stash
+from ossie_microsoft.semantic_model_to_ossie import build_ossie_document
 
 FIXTURES = Path(__file__).parent / "fixtures"
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -68,7 +70,8 @@ def test_cli_writes_ossie_yaml(tmp_path):
 
     out = tmp_path / "model.yaml"
     assert main(["import", "-i", str(FIXTURES / "sales_model.bim"), "-o", str(out)]) == 0
-    assert yaml.safe_load(out.read_text(encoding="utf-8"))["semantic_model"][0]["name"] == "sales_model"
+    document = yaml.safe_load(out.read_text(encoding="utf-8"))
+    assert document["semantic_model"][0]["name"] == "sales_model"
 
 
 def test_cli_reports_errors_without_traceback(tmp_path, capsys):
@@ -399,3 +402,193 @@ def test_a_named_format_with_a_time_part_stays_a_datetime(format_string):
 @pytest.mark.parametrize("format_string", ["#,0.00", "\\$#,0.00", "0.00%"])
 def test_a_numeric_format_string_is_not_a_date(format_string):
     assert _single_field_datatype("dateTime", format_string) == "DateTime"
+
+
+# ---------------------------------------------------------------------------
+# Reporting constructs Apache Ossie cannot represent
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("construct", "phrase"),
+    [
+        ("roles", "row-level security roles"),
+        ("perspectives", "perspectives"),
+        ("cultures", "translations"),
+        ("expressions", "shared Power Query expressions"),
+        ("queryGroups", "Power Query group folders"),
+    ],
+)
+def test_a_model_level_construct_ossie_cannot_hold_is_reported(bim, construct, phrase):
+    with pytest.warns(UserWarning) as caught:
+        build_ossie_document(bim)
+    messages = [str(w.message) for w in caught]
+    assert any(phrase in m and construct in m for m in messages), (
+        f"{construct} was carried in the stash but never reported"
+    )
+
+
+def test_a_hierarchy_is_reported_against_its_table(bim):
+    with pytest.warns(UserWarning) as caught:
+        build_ossie_document(bim)
+    assert any(
+        "hierarchies" in str(w.message) and "table 'Calendar'" in str(w.message)
+        for w in caught
+    )
+
+
+def test_a_kpi_is_reported_against_its_measure(bim):
+    with pytest.warns(UserWarning) as caught:
+        build_ossie_document(bim)
+    assert any(
+        "KPI" in str(w.message) and "measure 'Total Sales'" in str(w.message)
+        for w in caught
+    )
+
+
+def test_a_column_construct_is_reported_against_its_column(bim):
+    with pytest.warns(UserWarning) as caught:
+        build_ossie_document(bim)
+    messages = [str(w.message) for w in caught]
+    assert any("variations" in m and "column 'Date'" in m for m in messages)
+    assert any("sortByColumn" in m and "column 'FiscalYear'" in m for m in messages)
+
+
+def test_an_unrepresentable_construct_still_survives_the_round_trip(bim):
+    """Reporting a construct is not the same as dropping it."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        document = build_ossie_document(bim)
+        out = convert_ossie_to_semantic_model(document)
+    assert out["model"]["roles"] == bim["model"]["roles"]
+    assert out["model"]["perspectives"] == bim["model"]["perspectives"]
+
+
+def test_a_clean_model_reports_nothing():
+    """A model using no Power BI-only construct must convert in silence."""
+    bim = {
+        "name": "m",
+        "model": {
+            "tables": [
+                {
+                    "name": "T",
+                    "columns": [{"name": "C", "dataType": "string", "sourceColumn": "c"}],
+                    "partitions": [
+                        {
+                            "name": "T",
+                            "mode": "import",
+                            "source": {"type": "entity", "entityName": "t"},
+                        }
+                    ],
+                }
+            ]
+        },
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        build_ossie_document(bim)
+
+
+def test_every_report_also_reaches_the_log(bim, caplog):
+    """The log is the channel for callers that do not install a warning filter."""
+    with caplog.at_level(logging.WARNING, logger="ossie_microsoft"), warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        build_ossie_document(bim)
+    assert any("row-level security roles" in r.getMessage() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# CLI reporting
+# ---------------------------------------------------------------------------
+
+
+def test_the_cli_reports_unconvertible_constructs_on_stderr(tmp_path, capsys):
+    from ossie_microsoft.cli import main
+
+    out = tmp_path / "model.yaml"
+    assert main(["import", "-i", str(FIXTURES / "sales_model.bim"), "-o", str(out)]) == 0
+    err = capsys.readouterr().err
+    assert "row-level security roles" in err
+    assert "could not be converted faithfully" in err
+
+
+def test_the_cli_reports_each_construct_once(tmp_path, capsys):
+    """warn() feeds both a warning and a log; the CLI must not print both."""
+    from ossie_microsoft.cli import main
+
+    out = tmp_path / "model.yaml"
+    main(["import", "-i", str(FIXTURES / "sales_model.bim"), "-o", str(out)])
+    err = capsys.readouterr().err
+    assert err.count("row-level security roles") == 1
+
+
+def test_quiet_suppresses_the_report(tmp_path, capsys):
+    from ossie_microsoft.cli import main
+
+    out = tmp_path / "model.yaml"
+    assert main(["import", "-q", "-i", str(FIXTURES / "sales_model.bim"), "-o", str(out)]) == 0
+    assert capsys.readouterr().err == ""
+    assert out.exists()
+
+
+def test_strict_fails_when_something_could_not_be_converted(tmp_path):
+    from ossie_microsoft.cli import main
+
+    out = tmp_path / "model.yaml"
+    assert main(
+        ["import", "--strict", "-i", str(FIXTURES / "sales_model.bim"), "-o", str(out)]
+    ) == 1
+    # A non-zero exit must still mean the output was written, so a caller can inspect it.
+    assert out.exists()
+
+
+def test_strict_succeeds_on_a_clean_model(tmp_path):
+    from ossie_microsoft.cli import main
+
+    src = tmp_path / "clean.bim"
+    src.write_text(
+        json.dumps(
+            {
+                "name": "m",
+                "model": {
+                    "tables": [
+                        {
+                            "name": "T",
+                            "columns": [
+                                {"name": "C", "dataType": "string", "sourceColumn": "c"}
+                            ],
+                            "partitions": [
+                                {
+                                    "name": "T",
+                                    "mode": "import",
+                                    "source": {"type": "entity", "entityName": "t"},
+                                }
+                            ],
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert main(["import", "--strict", "-i", str(src), "-o", str(tmp_path / "o.yaml")]) == 0
+
+
+def test_the_flags_work_before_and_after_the_subcommand(tmp_path):
+    """Nobody expects to have to put a global flag before the subcommand."""
+    from ossie_microsoft.cli import main
+
+    src = str(FIXTURES / "sales_model.bim")
+    before = main(["--strict", "import", "-i", src, "-o", str(tmp_path / "a.yaml")])
+    after = main(["import", "--strict", "-i", src, "-o", str(tmp_path / "b.yaml")])
+    assert before == after == 1
+
+
+def test_the_cli_leaves_no_handler_behind(tmp_path):
+    """A library caller importing the CLI must not inherit its stderr handler."""
+    from ossie_microsoft._common import LOGGER
+    from ossie_microsoft.cli import main
+
+    before = list(LOGGER.handlers)
+    main(["import", "-q", "-i", str(FIXTURES / "sales_model.bim"), "-o", str(tmp_path / "o.yaml")])
+    assert LOGGER.handlers == before

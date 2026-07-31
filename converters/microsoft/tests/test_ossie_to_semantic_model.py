@@ -639,7 +639,7 @@ def test_an_edited_expression_beats_a_preserved_source_column():
 
 def test_a_stash_written_by_a_newer_converter_is_refused():
     """Replaying a payload we may misunderstand is worse than failing loudly."""
-    from ossie_microsoft._common import ConversionError, STASH_VERSION, VENDOR
+    from ossie_microsoft._common import STASH_VERSION, VENDOR, ConversionError
 
     obj = {
         "custom_extensions": [
@@ -651,7 +651,7 @@ def test_a_stash_written_by_a_newer_converter_is_refused():
 
 
 def test_a_stash_with_a_non_integer_version_is_refused():
-    from ossie_microsoft._common import ConversionError, VENDOR
+    from ossie_microsoft._common import VENDOR, ConversionError
 
     obj = {
         "custom_extensions": [
@@ -674,3 +674,53 @@ def test_a_stash_this_converter_understands_is_replayed():
         ]
     }
     assert read_stash(obj) == {"lineageTag": "abc"}
+
+
+# ---------------------------------------------------------------------------
+# Reporting Apache Ossie constructs Power BI cannot hold
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("construct", ["ai_context", "label"])
+def test_an_ossie_field_construct_power_bi_cannot_hold_is_reported(construct):
+    """These are dropped outright, so silence would be real data loss."""
+    semantic_model = _minimal()
+    semantic_model["datasets"][0]["fields"][0][construct] = "something"
+    with pytest.warns(UserWarning, match=construct):
+        _convert(semantic_model)
+
+
+def test_ai_context_is_reported_at_every_level():
+    semantic_model = _minimal()
+    semantic_model["ai_context"] = "model level"
+    semantic_model["datasets"][0]["ai_context"] = "dataset level"
+    with pytest.warns(UserWarning) as caught:
+        _convert(semantic_model)
+    scopes = {
+        str(w.message).split("]")[0].lstrip("[")
+        for w in caught
+        if "ai_context" in str(w.message)
+    }
+    assert scopes == {"model", "dataset 'T'"}
+
+
+def test_a_dropped_construct_says_it_was_dropped_not_preserved():
+    """The two directions lose things differently and must not claim otherwise."""
+    semantic_model = _minimal()
+    semantic_model["ai_context"] = "x"
+    with pytest.warns(UserWarning) as caught:
+        _convert(semantic_model)
+    message = next(str(w.message) for w in caught if "ai_context" in str(w.message))
+    assert "dropped" in message
+    assert "preserved" not in message
+
+
+def test_the_export_names_power_bi_as_the_model_that_cannot_hold_it():
+    """The import says 'no Apache Ossie counterpart'; the export must say the reverse."""
+    semantic_model = _minimal()
+    semantic_model["ai_context"] = "x"
+    with pytest.warns(UserWarning) as caught:
+        _convert(semantic_model)
+    message = next(str(w.message) for w in caught if "ai_context" in str(w.message))
+    assert "no Power BI counterpart" in message
+    assert "Apache Ossie counterpart" not in message

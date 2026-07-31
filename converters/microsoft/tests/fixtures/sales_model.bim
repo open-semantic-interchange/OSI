@@ -81,7 +81,12 @@
             "name": "Total Sales",
             "description": "Sum of sales amount",
             "expression": "SUM ( Sales[Amount] )",
-            "formatString": "\\$#,0.00"
+            "formatString": "\\$#,0.00",
+            "kpi": {
+              "targetExpression": "1000000",
+              "statusGraphic": "Three Circles Colored",
+              "statusExpression": "SWITCH(TRUE(), [Total Sales] > 1000000, 1, -1)"
+            }
           },
           {
             "name": "Order Count",
@@ -134,13 +139,24 @@
             "name": "Date",
             "dataType": "dateTime",
             "sourceColumn": "date",
-            "isKey": true
+            "isKey": true,
+            "variations": [
+              {
+                "name": "Variation",
+                "relationship": "e5f6a7b8",
+                "defaultHierarchy": {
+                  "table": "LocalDateTable_9f2a1b3c",
+                  "hierarchy": "Date Hierarchy"
+                }
+              }
+            ]
           },
           {
             "name": "FiscalYear",
             "dataType": "int64",
             "sourceColumn": "fiscal_year",
-            "dataCategory": "Time"
+            "dataCategory": "Time",
+            "sortByColumn": "Date"
           }
         ],
         "partitions": [
@@ -150,6 +166,23 @@
               "type": "query",
               "query": "SELECT * FROM dbo.calendar"
             }
+          }
+        ],
+        "hierarchies": [
+          {
+            "name": "Calendar Drilldown",
+            "levels": [
+              {
+                "name": "Year",
+                "ordinal": 0,
+                "column": "FiscalYear"
+              },
+              {
+                "name": "Date",
+                "ordinal": 1,
+                "column": "Date"
+              }
+            ]
           }
         ]
       },
@@ -233,6 +266,50 @@
         "fromColumn": "CustomerKey",
         "toTable": "Internal Staging",
         "toColumn": "Junk"
+      }
+    ],
+    "roles": [
+      {
+        "name": "Regional Manager",
+        "modelPermission": "read",
+        "tablePermissions": [
+          {
+            "name": "Sales",
+            "filterExpression": "[Region] = USERNAME()"
+          }
+        ]
+      }
+    ],
+    "perspectives": [
+      {
+        "name": "Executive",
+        "tables": [
+          {
+            "name": "Sales",
+            "measures": [
+              {
+                "name": "Total Sales"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "cultures": [
+      {
+        "name": "en-US"
+      }
+    ],
+    "expressions": [
+      {
+        "name": "ServerName",
+        "kind": "m",
+        "expression": "\"sql.contoso.com\" meta [IsParameterQuery=true, Type=\"Text\"]"
+      }
+    ],
+    "queryGroups": [
+      {
+        "folder": "Staging"
       }
     ]
   }

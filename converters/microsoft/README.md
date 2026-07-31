@@ -42,6 +42,25 @@ ossie-microsoft export -i model.yaml -o model.bim    # Apache Ossie -> Power BI
 
 With no `-o`, the result is written to stdout.
 
+Everything the converter could not carry across faithfully is reported on stderr:
+
+```
+$ ossie-microsoft import -i model.bim -o model.yaml
+[model] row-level security roles ('roles') has no Apache Ossie counterpart; preserved
+in the Power BI stash for round trip, but not represented in the Apache Ossie document
+[table 'Sales' measure 'Total Sales'] a KPI ('kpi') has no Apache Ossie counterpart; ...
+3 construct(s) could not be converted faithfully; see the messages above.
+```
+
+| Flag | Effect |
+| --- | --- |
+| `--strict` | exit non-zero if anything could not be converted faithfully |
+| `-q`, `--quiet` | suppress the report |
+
+`--strict` is the useful mode in a pipeline that must not silently degrade a model. The
+output file is still written, so a failing run can be inspected. Both flags are accepted
+before or after the subcommand.
+
 ### Library
 
 ```python
@@ -55,6 +74,19 @@ with open("model.bim", encoding="utf-8-sig") as fh:
     ossie_yaml = convert_semantic_model_to_ossie(json.load(fh))
 
 bim = convert_ossie_to_semantic_model(yaml.safe_load(ossie_yaml))
+```
+
+Each report is emitted twice, because the two channels answer different questions:
+
+- a `UserWarning`, so `warnings.simplefilter("error")` gives a hard, programmatic
+  guarantee that a conversion was lossless;
+- a record on the `ossie_microsoft` logger, for applications that consume a log rather
+  than installing warning filters.
+
+```python
+import logging
+
+logging.getLogger("ossie_microsoft").addHandler(logging.StreamHandler())
 ```
 
 ## Mapping
@@ -190,17 +222,40 @@ On export, a dataset whose Power BI partition was not preserved gets a placehold
 partition containing an M `error` expression that names the missing source. A refresh
 then fails with an actionable message rather than a query that quietly loads nothing.
 
+### Preserved, but not modelled
+
+These Power BI constructs survive a round trip in the stash, so nothing is lost when the
+destination is Power BI again. But Apache Ossie has no way to express them, so they are
+invisible to any other consumer of the document — and each one is reported on import.
+
+| Level | Construct |
+| --- | --- |
+| Model | row-level security roles, perspectives, translations/cultures, shared Power Query expressions and parameters, data sources, query groups |
+| Table | hierarchies, calculation groups, incremental refresh policies, detail rows definitions |
+| Column | date table variations, sort-by-column |
+| Measure | KPIs, detail rows definitions |
+
+Purely presentational properties (`isHidden`, `displayFolder`, `formatString`) are
+preserved just as faithfully but are not reported: a warning on every cosmetic property
+would bury the ones that matter.
+
+In the other direction, Apache Ossie's `ai_context` and `label` are **dropped** rather
+than preserved — a TMSL document has nowhere to record them — and are reported as such.
+
 ## Testing
 
 ```bash
 cd converters/microsoft
-uv run pytest
+uv run ruff check .
+uv run pytest --cov
 ```
+
+Coverage is enforced at 95%. The converter's contract is that every lossy branch reports
+itself, and an unexercised branch is an unproven report.
 
 ## Roadmap
 
 - TMDL as an alternative serialization alongside TMSL `model.bim`.
-- A `--strict` CLI flag that turns any lossy step into a non-zero exit.
 - Optional, explicitly opt-in SQL-to-DAX translation for the subset of aggregates that
   can be translated soundly, with a hard failure on the rest.
 - An end-to-end smoke test that deploys emitted TMSL to an Analysis Services instance,
