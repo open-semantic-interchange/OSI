@@ -59,7 +59,24 @@ jobs:
         run: |
           uv sync
 
+      - name: Lint
+        working-directory: converters/microsoft
+        run: |
+          uv run ruff check .
+
       - name: Unit Tests
         working-directory: converters/microsoft
         run: |
-          uv run pytest
+          uv run pytest --cov --cov-report=term-missing --cov-report=xml
+
+      - name: Round trip through the installed CLI
+        working-directory: converters/microsoft
+        run: |
+          uv run ossie-microsoft import -q -i tests/fixtures/sales_model.bim -o rt.yaml
+          uv run ossie-microsoft export -q -i rt.yaml -o rt.bim
+          test -s rt.yaml && test -s rt.bim
+
+      - name: Output validates against the core spec
+        working-directory: converters/microsoft
+        run: |
+          uv run --script ../../validation/validate.py rt.yaml
