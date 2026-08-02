@@ -15,19 +15,22 @@
 # specific language governing permissions and limitations
 # under the License.
 
-**/__pycache__/
-**/.venv/
+"""Converter between Microsoft Power BI / Fabric semantic models (TMSL ``model.bim``)
+and Apache Ossie semantic models. Pure offline transforms; no Power BI connection needed.
 
-**/.pytest_cache/
-**/.ruff_cache/
-**/.coverage
-**/coverage.xml
-**/htmlcov/
-**/dist/
-**/target/
-*.py[cod]
+    from ossie_microsoft import (
+        convert_semantic_model_to_ossie,
+        convert_ossie_to_semantic_model,
+    )
+"""
 
-# Go CLI
-cli/dist/
-cli/ossie
-cli/.tool-versions
+from ._common import ConversionError
+from .ossie_to_semantic_model import convert_ossie_to_semantic_model
+from .semantic_model_to_ossie import build_ossie_document, convert_semantic_model_to_ossie
+
+__all__ = [
+    "ConversionError",
+    "build_ossie_document",
+    "convert_ossie_to_semantic_model",
+    "convert_semantic_model_to_ossie",
+]
