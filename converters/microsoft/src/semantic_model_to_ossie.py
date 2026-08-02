@@ -223,8 +223,8 @@ def _convert_relationships(relationships: list, exported_names: set) -> list:
         if from_table not in exported_names or to_table not in exported_names:
             continue
 
-        from_cardinality = relationship.get("fromCardinality", "many")
-        to_cardinality = relationship.get("toCardinality", "one")
+        from_cardinality = relationship.get("fromCardinality", "many").lower()
+        to_cardinality = relationship.get("toCardinality", "one").lower()
         if from_cardinality == "many" and to_cardinality == "many":
             # OSI relationships are many-to-one or one-to-one only.
             continue
