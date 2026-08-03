@@ -28,7 +28,8 @@ Ossie expression written in ``ANSI_SQL`` (or any other dialect) is only usable w
 a plain column reference, which maps to a TMSL ``sourceColumn``. Anything else is
 reported through :func:`_common.warn` and skipped, because emitting a
 mechanically rewritten expression that was never authored for the DAX engine would
-produce a model that looks correct and computes the wrong answer.
+produce a model that looks correct and computes the wrong answer. Expressions for fields and metrics
+are stored as annotations on the semantic model object (i.e. measure/column).
 """
 
 from _common import (
