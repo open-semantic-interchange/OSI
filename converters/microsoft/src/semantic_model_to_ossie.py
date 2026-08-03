@@ -22,7 +22,7 @@ description, tables -> datasets, columns -> fields, measures -> metrics, relatio
 relationships.
 
 Power BI constructs with no Apache Ossie counterpart -- format strings, display folders,
-perspectives, row-level security, KPIs, hierarchies, partitions, calculation groups,
+perspectives, translations, roles, row-level security, KPIs, hierarchies, partitions, calculation groups,
 cross-filter direction and so on -- are not discarded. They are preserved verbatim in a
 ``POWER_BI`` ``custom_extensions`` entry so that
 :mod:`ossie_to_semantic_model` can rebuild them, per the round-trip
