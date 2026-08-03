@@ -150,8 +150,9 @@ def _convert_field(field, table_name, key_columns, unique_columns) -> dict:
     dialect, expression = _pick_expression(field.get("expression"), f"{table_name}.{name}")
 
     column = {"name": name}
-    if _unquote(expression) == name:
-        column["sourceColumn"] = name
+    source_column = _source_column(expression)
+    if source_column is not None:
+        column["sourceColumn"] = source_column
     else:
         column["type"] = "calculated"
         column["expression"] = (
@@ -167,6 +168,15 @@ def _convert_field(field, table_name, key_columns, unique_columns) -> dict:
         column["isUnique"] = True
     _apply_ai_context(column, field.get("ai_context"))
     return column
+
+
+def _source_column(expression):
+    """Return the source name for a plain column reference, or None for logic."""
+    expression = expression.strip()
+    match = _DELIMITED_RE.match(expression)
+    if match:
+        return next(group for group in match.groups() if group is not None)
+    return expression if _IDENTIFIER_RE.match(expression) else None
 
 
 def _expression_annotations(dialect, expression) -> list:
@@ -297,7 +307,7 @@ def _attach_metrics(tables, metrics):
         else:
             measure = {
                 "name": name,
-                "expression": PLACEHOLDER_MEASURE_EXPRESSION,
+                "expression": PLACEHOLDER_EXPRESSION,
                 "annotations": _expression_annotations(dialect, expression),
             }
         if metric.get("description"):
