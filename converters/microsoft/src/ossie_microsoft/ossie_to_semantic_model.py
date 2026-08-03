@@ -31,7 +31,7 @@ mechanically rewritten expression that was never authored for the DAX engine wou
 produce a model that looks correct and computes the wrong answer.
 """
 
-from ._common import (
+from _common import (
     DATE_ONLY_FORMAT,
     DEFAULT_COMPATIBILITY_LEVEL,
     DIALECT_ANSI,

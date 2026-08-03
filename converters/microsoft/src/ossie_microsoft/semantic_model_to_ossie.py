@@ -34,7 +34,7 @@ import re
 
 import yaml
 
-from ._common import (
+from _common import (
     AUTO_DATE_TABLE_RE,
     DIALECT_ANSI,
     DIALECT_DAX,

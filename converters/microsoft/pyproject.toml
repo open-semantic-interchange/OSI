@@ -48,14 +48,20 @@ dependencies = [
 ]
 
 [project.scripts]
-ossie-microsoft = "ossie_microsoft.cli:main"
+ossie-microsoft = "cli:main"
 
 [project.urls]
 homepage = "https://ossie.apache.org/"
 repository = "https://github.com/apache/ossie/"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ossie_microsoft"]
+packages = [
+    "src/_common.py",
+    "src/cli.py",
+    "src/ossie_microsoft.py",
+    "src/ossie_to_semantic_model.py",
+    "src/semantic_model_to_ossie.py",
+]
 
 [tool.ruff]
 line-length = 100
@@ -74,7 +80,13 @@ filterwarnings = ["ignore::UserWarning"]
 
 [tool.coverage.run]
 branch = true
-source = ["ossie_microsoft"]
+source = [
+    "_common",
+    "cli",
+    "ossie_microsoft",
+    "ossie_to_semantic_model",
+    "semantic_model_to_ossie",
+]
 
 [tool.coverage.report]
 # The converter's contract is that every lossy branch reports itself. An
