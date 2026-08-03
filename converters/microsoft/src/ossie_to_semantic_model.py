@@ -30,7 +30,18 @@ reported through :func:`_common.warn` and skipped, because emitting a
 mechanically rewritten expression that was never authored for the DAX engine would
 produce a model that looks correct and computes the wrong answer. Expressions for fields and metrics
 are stored as annotations on the semantic model object (i.e. measure/column).
+
+The ``ai_context`` values are saved as annotations on the semantic model object. Relationships which
+depend on multiple columns are not supported in Power BI and are skipped. The ``primary_key`` and
+``unique_keys`` are stored as annotations on the semantic model object, but only single-column keys
+are represented in the TMSL model.
+
 """
+
+import json
+import re
+
+import yaml
 
 from _common import (
     DATE_ONLY_FORMAT,
@@ -55,17 +66,6 @@ from _common import (
 # import direction, there is no stash on a TMSL document, so it is genuinely dropped.
 _DROPPED = "dropped, because a Power BI semantic model has nowhere to record it"
 
-# Placeholder partition for a dataset whose Power BI partition was not preserved. It is
-# deliberately an `error` expression: a refresh fails loudly with an actionable message
-# instead of a plausible-looking query that silently loads nothing.
-_PARTITION_PLACEHOLDER = (
-    'let\n'
-    '    Source = error "Apache Ossie source ""{source}"" has no Power BI connection. '
-    'Replace this placeholder partition with a real query."\n'
-    'in\n'
-    '    Source'
-)
-
 # Stash keys the export interprets rather than replays as TMSL properties.
 _STASH_CONTROL_KEYS = frozenset(
     {"excludedTables", "excludedRelationships", "document", "descriptionSource"}
@@ -75,6 +75,11 @@ _RELATIONSHIP_CONTROL_KEYS = frozenset({"flipped", "name"})
 _MEASURE_CONTROL_KEYS = frozenset({"table", "name"})
 _COLUMN_CONTROL_KEYS = frozenset({"dataType", "sourceColumn"})
 
+AI_CONTEXT_ANNOTATION = "OssieAIContext"
+DIALECT_ANNOTATION = "OssieExpressionDialect"
+EXPRESSION_ANNOTATION = "OssieExpression"
+PLACEHOLDER_EXPRESSION = "BLANK()"
+
 # Apache Ossie temporal types that Power BI cannot represent faithfully. Power BI stores
 # every temporal value as `dateTime`, so a time-of-day type gains a date part and a
 # timezone-aware type loses its offset.
@@ -83,22 +88,43 @@ _LOSSY_TEMPORAL = {
     "DateTimeTz": "Power BI has no timezone-aware data type; the UTC offset is lost",
 }
 
+DIRECT_LAKE_COMPATIBILITY_LEVEL = 1702
+DIRECT_LAKE_EXPRESSION = "DatabaseQuery"
+ONELAKE_ENDPOINT = "https://onelake.dfs.fabric.microsoft.com"
+PLACEHOLDER_DATABASE = "database"
+PLACEHOLDER_ITEM_ID = "00000000-0000-0000-0000-000000000000"
+PLACEHOLDER_SERVER = "localhost"
+PLACEHOLDER_WORKSPACE_ID = "00000000-0000-0000-0000-000000000000"
+DEFAULT_SCHEMA = "dbo"
 
-def convert_ossie_to_semantic_model(document):
+_TABLE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$@#]*$")
+_DELIMITED_RE = re.compile(r'^\[([^\]]+)\]$|^"([^"]+)"$|^`([^`]+)`$')
+_QUERY_START_RE = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
+
+
+def convert_ossie_to_semantic_model(ossie_yaml_str, source=None):
     """Convert an Apache Ossie document into a Power BI ``model.bim`` document.
 
     Args:
-        document: A parsed Apache Ossie semantic model document.
+        ossie_yaml_str: The Apache Ossie document as YAML text. A parsed mapping is
+            also accepted for compatibility with existing library callers.
+        source: Optional OneLake location for generated Direct Lake partitions, as
+            ``{"workspaceId": ..., "itemId": ...}``.
 
     Returns:
         The TMSL ``model.bim`` document as a dict, ready to be serialized as JSON.
 
     Raises:
-        TypeError: if `document` is not a parsed Apache Ossie document.
+        TypeError: if the input is neither YAML text nor a parsed document.
         ValueError: if the document contains no semantic model.
     """
+    document = (
+        yaml.safe_load(ossie_yaml_str)
+        if isinstance(ossie_yaml_str, str)
+        else ossie_yaml_str
+    )
     if not isinstance(document, dict):
-        raise TypeError("document must be a parsed Apache Ossie document (dict)")
+        raise TypeError("input must be Apache Ossie YAML text or a parsed document")
 
     version = document.get("version")
     if version and version != OSSIE_VERSION:
@@ -123,7 +149,9 @@ def convert_ossie_to_semantic_model(document):
     _warn_foreign_extensions("model", semantic_model)
     warn_unsupported("model", semantic_model, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
 
-    tables, table_columns = _convert_datasets(semantic_model.get("datasets") or [])
+    tables, table_columns, generated_partitions = _convert_datasets(
+        semantic_model.get("datasets") or []
+    )
     _apply_measures(tables, semantic_model.get("metrics") or [])
 
     relationships = _convert_relationships(
@@ -136,6 +164,8 @@ def convert_ossie_to_semantic_model(document):
     tables.extend(stash.get("excludedTables") or [])
 
     model = {"tables": tables}
+    if generated_partitions:
+        model["expressions"] = [_direct_lake_expression(source)]
     description = semantic_model.get("description")
     if description and stash.get("descriptionSource") != "document":
         model["description"] = description
@@ -149,12 +179,16 @@ def convert_ossie_to_semantic_model(document):
         if key not in _STASH_CONTROL_KEYS:
             model.setdefault(key, value)
     model.setdefault("culture", "en-US")
+    _apply_ai_context(model, semantic_model.get("ai_context"))
 
     bim = {"name": semantic_model.get("name") or "semantic_model"}
     if description and stash.get("descriptionSource") == "document":
         bim["description"] = description
     bim.update(document_properties)
-    bim.setdefault("compatibilityLevel", DEFAULT_COMPATIBILITY_LEVEL)
+    bim.setdefault(
+        "compatibilityLevel",
+        DIRECT_LAKE_COMPATIBILITY_LEVEL if generated_partitions else DEFAULT_COMPATIBILITY_LEVEL,
+    )
     bim["model"] = model
     return bim
 
@@ -166,15 +200,17 @@ def convert_ossie_to_semantic_model(document):
 
 def _convert_datasets(datasets):
     tables = []
+    generated_partitions = False
     # Maps a table name to the set of its column names, used to validate relationships.
     table_columns = {}
     for dataset in datasets:
         if not isinstance(dataset, dict) or not dataset.get("name"):
             continue
-        table = _convert_dataset(dataset)
+        table, generated_partition = _convert_dataset(dataset)
+        generated_partitions = generated_partitions or generated_partition
         tables.append(table)
         table_columns[table["name"]] = {c["name"] for c in table["columns"]}
-    return tables, table_columns
+    return tables, table_columns, generated_partitions
 
 
 def _convert_dataset(dataset):
@@ -209,32 +245,135 @@ def _convert_dataset(dataset):
         columns.insert(0, column)
 
     partitions = stash.get("partitions")
+    generated_partition = not partitions
     if not partitions:
-        source = dataset.get("source") or name
-        warn(
-            scope,
-            f"no Power BI partition was preserved for source '{source}'; emitting a "
-            "placeholder partition that must be replaced before refresh",
-        )
-        partitions = [
-            {
-                "name": name,
-                "mode": "import",
-                "source": {
-                    "type": "m",
-                    # `"` is escaped as `""` inside an M string literal.
-                    "expression": _tmsl_text(
-                        _PARTITION_PLACEHOLDER.format(source=source.replace('"', '""'))
-                    ),
-                },
-            }
-        ]
+        partitions = [_convert_partition(name, dataset.get("source") or name)]
     table["partitions"] = partitions
 
     for key, value in stash.items():
         if key not in _TABLE_CONTROL_KEYS and key != "partitions":
             table.setdefault(key, value)
-    return table
+    _apply_ai_context(table, dataset.get("ai_context"))
+    return table, generated_partition
+
+
+def _convert_partition(table_name, source):
+    source = str(source).strip()
+    parts = _table_reference_parts(source)
+    if parts is None:
+        warn(
+            f"dataset '{table_name}'",
+            "Direct Lake cannot read a query source; using an import partition",
+        )
+        return {
+            "name": table_name,
+            "mode": "import",
+            "source": {"type": "m", "expression": _tmsl_text(_m_expression(source))},
+        }
+
+    partition_source = {"type": "entity", "entityName": parts[-1]}
+    if len(parts) > 1:
+        partition_source["schemaName"] = parts[-2]
+    partition_source["expressionSource"] = DIRECT_LAKE_EXPRESSION
+    return {"name": table_name, "mode": "directLake", "source": partition_source}
+
+
+def _direct_lake_expression(source):
+    """Build the shared M expression for generated Direct Lake partitions."""
+    source = source or {}
+    if not isinstance(source, dict):
+        raise TypeError("source must be a mapping with workspaceId and itemId")
+    workspace_id = source.get("workspaceId") or PLACEHOLDER_WORKSPACE_ID
+    item_id = source.get("itemId") or PLACEHOLDER_ITEM_ID
+    if not source.get("workspaceId") or not source.get("itemId"):
+        warn(
+            DIRECT_LAKE_EXPRESSION,
+            "no workspaceId/itemId given; the Direct Lake source uses placeholder ids",
+        )
+
+    url = f"{ONELAKE_ENDPOINT}/{workspace_id}/{item_id}"
+    return {
+        "name": DIRECT_LAKE_EXPRESSION,
+        "kind": "m",
+        "expression": [
+            "let",
+            f"    Source = AzureStorage.DataLake({_m_string(url)})",
+            "in",
+            "    Source",
+        ],
+    }
+
+
+def _m_expression(source):
+    """Build Power Query M for a table reference or SQL query source."""
+    parts = _table_reference_parts(source)
+    if parts is None:
+        query = source.rstrip().rstrip(";")
+        return (
+            f"let\n"
+            f"    Source = Sql.Database({_m_string(PLACEHOLDER_SERVER)}, "
+            f"{_m_string(PLACEHOLDER_DATABASE)}, [Query={_m_string(query)}])\n"
+            f"in\n"
+            f"    Source"
+        )
+
+    database, schema, item = _padded_reference(parts)
+    return (
+        f"let\n"
+        f"    Source = Sql.Database({_m_string(PLACEHOLDER_SERVER)}, {_m_string(database)}),\n"
+        f"    Navigation = Source{{[Schema={_m_string(schema)}, "
+        f"Item={_m_string(item)}]}}[Data]\n"
+        f"in\n"
+        f"    Navigation"
+    )
+
+
+def _table_reference_parts(source):
+    """Split a qualified table reference into identifier parts, or None for a query."""
+    if _QUERY_START_RE.match(source):
+        return None
+    parts = [_unquote(part.strip()) for part in _split_qualified_name(source)]
+    if not parts or len(parts) > 3 or not all(_TABLE_IDENTIFIER_RE.match(p) for p in parts):
+        return None
+    return parts
+
+
+def _padded_reference(parts):
+    parts = list(parts)
+    while len(parts) < 3:
+        parts.insert(0, DEFAULT_SCHEMA if len(parts) == 1 else PLACEHOLDER_DATABASE)
+    return tuple(parts)
+
+
+def _split_qualified_name(source):
+    """Split on dots outside square-bracket, double-quote, or backtick delimiters."""
+    parts = []
+    current = ""
+    closing = None
+    for char in source:
+        if closing:
+            current += char
+            if char == closing:
+                closing = None
+        elif char in ('"', "`", "["):
+            current += char
+            closing = "]" if char == "[" else char
+        elif char == ".":
+            parts.append(current)
+            current = ""
+        else:
+            current += char
+    parts.append(current)
+    return parts
+
+
+def _unquote(value):
+    match = _DELIMITED_RE.match(value.strip())
+    return next(group for group in match.groups() if group is not None) if match else value.strip()
+
+
+def _m_string(value):
+    return '"' + value.replace('"', '""') + '"'
 
 
 def _key_columns(dataset, scope):
@@ -281,14 +420,15 @@ def _convert_field(field, dataset_scope):
     column = {"name": name}
     expressions = dialect_expressions(field.get("expression"))
 
-    if DIALECT_DAX in expressions:
-        column["type"] = "calculated"
-        column["expression"] = _tmsl_text(expressions[DIALECT_DAX])
-    else:
-        source_column = _source_column(expressions, name, stash, scope)
-        if source_column is None:
-            return None
+    source_column = _source_column(expressions, name, stash)
+    if source_column is not None:
         column["sourceColumn"] = source_column
+    else:
+        dialect, expression = _preferred_expression(expressions)
+        column["type"] = "calculated"
+        column["expression"] = (
+            _tmsl_text(expression) if dialect == DIALECT_DAX else PLACEHOLDER_EXPRESSION
+        )
 
     datatype = _column_datatype(field, stash, scope)
     if datatype:
@@ -306,6 +446,9 @@ def _convert_field(field, dataset_scope):
     for key, value in stash.items():
         if key not in _COLUMN_CONTROL_KEYS:
             column.setdefault(key, value)
+    if source_column is None:
+        _apply_expression_annotations(column, dialect, expression)
+    _apply_ai_context(column, field.get("ai_context"))
     return column
 
 
@@ -324,8 +467,8 @@ def _column_datatype(field, stash, scope):
     return _map_datatype(datatype, scope)
 
 
-def _source_column(expressions, name, stash, scope):
-    """Resolve a non-DAX field expression to a TMSL ``sourceColumn``, or None.
+def _source_column(expressions, name, stash):
+    """Resolve a plain field expression to a TMSL ``sourceColumn``, or None.
 
     A ``sourceColumn`` names a column in the table's source query, so a plain column
     reference carries across directly. A computed SQL expression has no such equivalent
@@ -335,8 +478,7 @@ def _source_column(expressions, name, stash, scope):
         # No expression at all: the field name is the column name by definition.
         return name
 
-    dialect = DIALECT_ANSI if DIALECT_ANSI in expressions else sorted(expressions)[0]
-    expression = expressions[dialect].strip()
+    _, expression = _preferred_expression(expressions)
     if stash.get("sourceColumn") == expression:
         # A preserved source column the source query exposes under a name that is not a
         # bare SQL identifier, still unedited. Replay it rather than reparse it.
@@ -345,12 +487,12 @@ def _source_column(expressions, name, stash, scope):
     candidate = expression.strip('"').strip("`").strip("[]")
     if IDENTIFIER_RE.match(candidate):
         return candidate
-    warn(
-        scope,
-        f"{dialect} expression is not a plain column reference and is not translated "
-        "to DAX; column skipped",
-    )
     return None
+
+
+def _preferred_expression(expressions):
+    dialect = DIALECT_DAX if DIALECT_DAX in expressions else sorted(expressions)[0]
+    return dialect, expressions[dialect].strip()
 
 
 def _map_datatype(datatype, scope):
@@ -385,17 +527,10 @@ def _apply_measures(tables, metrics):
         warn_unsupported(scope, metric, OSSIE_UNSUPPORTED, "Power BI", _DROPPED)
 
         expressions = dialect_expressions(metric.get("expression"))
-        expression = expressions.get(DIALECT_DAX)
-        if not expression:
-            # A measure is DAX. Mechanically rewriting a SQL aggregate would ignore
-            # filter context and produce a measure that is wrong rather than missing.
-            available = ", ".join(sorted(expressions)) or "none"
-            warn(
-                scope,
-                f"metric has no DAX expression (dialects: {available}); a Power BI "
-                "measure cannot be derived from another dialect, so it is skipped",
-            )
+        if not expressions:
+            warn(scope, "metric has no expression; skipped")
             continue
+        dialect, expression = _preferred_expression(expressions)
 
         table = by_name.get(stash.get("table"))
         if table is None:
@@ -410,7 +545,9 @@ def _apply_measures(tables, metrics):
 
         measure = {
             "name": stash.get("name", metric["name"]),
-            "expression": _tmsl_text(expression),
+            "expression": (
+                _tmsl_text(expression) if dialect == DIALECT_DAX else PLACEHOLDER_EXPRESSION
+            ),
         }
         if metric.get("description"):
             measure["description"] = metric["description"]
@@ -425,6 +562,8 @@ def _apply_measures(tables, metrics):
         for key, value in stash.items():
             if key not in _MEASURE_CONTROL_KEYS:
                 measure.setdefault(key, value)
+        _apply_expression_annotations(measure, dialect, expression)
+        _apply_ai_context(measure, metric.get("ai_context"))
         table.setdefault("measures", []).append(measure)
 
 
@@ -476,6 +615,7 @@ def _convert_relationships(relationships, table_columns):
         for key, value in stash.items():
             if key not in _RELATIONSHIP_CONTROL_KEYS:
                 tmsl.setdefault(key, value)
+        _apply_ai_context(tmsl, relationship.get("ai_context"))
         converted.append(prune(tmsl))
     return converted
 
@@ -497,6 +637,31 @@ def _endpoints_exist(scope, table_columns, from_table, from_column, to_table, to
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _apply_expression_annotations(target, dialect, expression):
+    _set_annotation(target, DIALECT_ANNOTATION, dialect)
+    _set_annotation(target, EXPRESSION_ANNOTATION, expression)
+
+
+def _apply_ai_context(target, ai_context):
+    if ai_context is None:
+        return
+    value = (
+        ai_context
+        if isinstance(ai_context, str)
+        else json.dumps(ai_context, ensure_ascii=False, sort_keys=True)
+    )
+    _set_annotation(target, AI_CONTEXT_ANNOTATION, value)
+
+
+def _set_annotation(target, name, value):
+    annotations = target.setdefault("annotations", [])
+    for annotation in annotations:
+        if isinstance(annotation, dict) and annotation.get("name") == name:
+            annotation["value"] = str(value)
+            return
+    annotations.append({"name": name, "value": str(value)})
 
 
 def _tmsl_text(value):

@@ -113,7 +113,6 @@ TMSL_UNSUPPORTED_MEASURE = {
 # genuinely cannot be carried across: a TMSL document has nowhere to put them, so they
 # are reported and dropped rather than preserved.
 OSSIE_UNSUPPORTED = {
-    "ai_context": "AI context",
     "label": "a display label",
 }
 

@@ -73,7 +73,10 @@ from ossie_microsoft import convert_ossie_to_semantic_model, convert_semantic_mo
 with open("model.bim", encoding="utf-8-sig") as fh:
     ossie_yaml = convert_semantic_model_to_ossie(json.load(fh))
 
-bim = convert_ossie_to_semantic_model(yaml.safe_load(ossie_yaml))
+bim = convert_ossie_to_semantic_model(
+  ossie_yaml,
+  source={"workspaceId": "<workspace-id>", "itemId": "<item-id>"},
+)
 ```
 
 Each report is emitted twice, because the two channels answer different questions:
@@ -204,8 +207,6 @@ These are reported rather than approximated, in either direction:
 | Composite relationships | A TMSL relationship joins exactly one column pair |
 | Composite primary/unique keys | TMSL marks a single key column per table |
 | `Opaque` fields | Power BI has no untyped data type |
-| Metrics without a DAX expression | see [Design rule](#design-rule-expressions-are-never-rewritten) |
-| Computed non-DAX field expressions | as above |
 | Other vendors' `custom_extensions` | not interpretable by Power BI |
 
 On import, private tables, calculation groups, auto-generated date tables
@@ -218,9 +219,9 @@ A data type with no portable equivalent (`binary`, `variant`, `automatic`, `unkn
 also kept in the stash, so the export restores the original TMSL type rather than
 guessing one from the portable model.
 
-On export, a dataset whose Power BI partition was not preserved gets a placeholder
-partition containing an M `error` expression that names the missing source. A refresh
-then fails with an actionable message rather than a query that quietly loads nothing.
+On export, a dataset whose Power BI partition was not preserved gets a Direct Lake
+partition for a table source, or an import partition for a query source. Direct Lake
+connection details come from the optional `source` argument.
 
 ### Preserved, but not modelled
 
@@ -239,8 +240,12 @@ Purely presentational properties (`isHidden`, `displayFolder`, `formatString`) a
 preserved just as faithfully but are not reported: a warning on every cosmetic property
 would bury the ones that matter.
 
-In the other direction, Apache Ossie's `ai_context` and `label` are **dropped** rather
-than preserved — a TMSL document has nowhere to record them — and are reported as such.
+In the other direction, Apache Ossie's `ai_context` is stored in an
+`OssieAIContext` annotation. Metric expressions and calculated field expressions are
+stored in `OssieExpression` and `OssieExpressionDialect` annotations. Power BI executes
+the authored DAX directly; expressions in other dialects use `BLANK()` as a valid DAX
+placeholder while retaining the original expression in annotations. A `label` has no
+TMSL equivalent and is reported as dropped.
 
 ## Testing
 

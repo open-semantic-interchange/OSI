@@ -118,10 +118,10 @@ def _run_import(args):
 
 def _run_export(args):
     with open(args.input, encoding="utf-8-sig") as fh:
-        document = yaml.safe_load(fh)
+        ossie_yaml = fh.read()
     # Power BI writes model.bim as UTF-8 JSON with non-ASCII characters left as-is.
     return json.dumps(
-        convert_ossie_to_semantic_model(document), indent=2, ensure_ascii=False
+        convert_ossie_to_semantic_model(ossie_yaml), indent=2, ensure_ascii=False
     ) + "\n"
 
 

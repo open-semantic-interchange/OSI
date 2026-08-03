@@ -47,6 +47,10 @@ def _column(table, name):
     return next(c for c in table["columns"] if c["name"] == name)
 
 
+def _annotation(target, name):
+    return next(a["value"] for a in target["annotations"] if a["name"] == name)
+
+
 def _convert(semantic_model):
     return convert_ossie_to_semantic_model(
         {"version": OSSIE_VERSION, "semantic_model": [semantic_model]}
@@ -113,7 +117,7 @@ def test_the_model_header_is_restored_from_the_stash(bim_out):
 
 def test_a_model_without_a_stash_gets_documented_defaults():
     bim = _convert(_minimal())
-    assert bim["compatibilityLevel"] == 1550
+    assert bim["compatibilityLevel"] == 1702
     assert bim["model"]["culture"] == "en-US"
 
 
@@ -153,18 +157,20 @@ def test_a_dax_expression_becomes_a_calculated_column(bim_out):
     column = _column(_table(bim_out, "Sales"), "AmountWithTax")
     assert column["type"] == "calculated"
     assert column["expression"] == "Sales[Amount] * 1.2"
+    assert _annotation(column, "OssieExpression") == "Sales[Amount] * 1.2"
+    assert _annotation(column, "OssieExpressionDialect") == "DAX"
 
 
-def test_a_computed_sql_expression_is_skipped_rather_than_translated():
-    # Rewriting SQL into DAX would produce a column that is wrong, not one that is
-    # missing, so the converter refuses.
+def test_a_computed_sql_expression_becomes_an_annotated_calculated_column():
     semantic_model = _minimal()
     semantic_model["datasets"][0]["fields"][0]["expression"] = make_expression(
         "SUM(amount) / COUNT(*)", "ANSI_SQL"
     )
-    with pytest.warns(UserWarning, match="not a plain column reference"):
-        bim = _convert(semantic_model)
-    assert _table(bim, "T")["columns"] == []
+    column = _column(_table(_convert(semantic_model), "T"), "C")
+    assert column["type"] == "calculated"
+    assert column["expression"] == "BLANK()"
+    assert _annotation(column, "OssieExpression") == "SUM(amount) / COUNT(*)"
+    assert _annotation(column, "OssieExpressionDialect") == "ANSI_SQL"
 
 
 def test_a_date_field_carries_a_date_only_format_string():
@@ -204,14 +210,41 @@ def test_a_preserved_partition_is_replayed(bim_out):
     assert "Sql.Database" in "\n".join(partition["source"]["expression"])
 
 
-def test_a_dataset_without_a_partition_gets_a_failing_placeholder():
-    with pytest.warns(UserWarning, match="placeholder partition"):
-        bim = _convert(_minimal())
-    expression = "\n".join(_table(bim, "T")["partitions"][0]["source"]["expression"])
-    # An `error` expression fails the refresh loudly instead of loading nothing.
-    assert expression.startswith("let")
-    assert "error" in expression
-    assert "dbo.t" in expression
+def test_yaml_text_and_source_parameters_generate_a_direct_lake_partition():
+    document = {"version": OSSIE_VERSION, "semantic_model": [_minimal()]}
+    bim = convert_ossie_to_semantic_model(
+        yaml.safe_dump(document),
+        source={"workspaceId": "workspace", "itemId": "item"},
+    )
+
+    partition = _table(bim, "T")["partitions"][0]
+    assert partition == {
+        "name": "T",
+        "mode": "directLake",
+        "source": {
+            "type": "entity",
+            "entityName": "t",
+            "schemaName": "dbo",
+            "expressionSource": "DatabaseQuery",
+        },
+    }
+    assert bim["compatibilityLevel"] == 1702
+    expression = bim["model"]["expressions"][0]
+    assert expression["name"] == "DatabaseQuery"
+    assert "https://onelake.dfs.fabric.microsoft.com/workspace/item" in expression[
+        "expression"
+    ][1]
+
+
+def test_a_query_source_uses_an_import_partition():
+    semantic_model = _minimal()
+    semantic_model["datasets"][0]["source"] = "SELECT c FROM dbo.t;"
+    with pytest.warns(UserWarning, match="Direct Lake cannot read a query source"):
+        bim = _convert(semantic_model)
+
+    partition = _table(bim, "T")["partitions"][0]
+    assert partition["mode"] == "import"
+    assert "Sql.Database" in "\n".join(partition["source"]["expression"])
 
 
 # --- measures --------------------------------------------------------------
@@ -221,9 +254,11 @@ def test_a_metric_returns_to_its_home_table(bim_out):
     measures = {m["name"]: m for m in _table(bim_out, "Sales")["measures"]}
     assert measures["Total Sales"]["expression"] == "SUM ( Sales[Amount] )"
     assert measures["Total Sales"]["formatString"] == "\\$#,0.00"
+    assert _annotation(measures["Total Sales"], "OssieExpression") == "SUM ( Sales[Amount] )"
+    assert _annotation(measures["Total Sales"], "OssieExpressionDialect") == "DAX"
 
 
-def test_a_metric_without_a_dax_expression_is_skipped():
+def test_a_metric_without_a_dax_expression_becomes_an_annotated_measure():
     semantic_model = _minimal(
         metrics=[
             {
@@ -232,9 +267,12 @@ def test_a_metric_without_a_dax_expression_is_skipped():
             }
         ]
     )
-    with pytest.warns(UserWarning, match="cannot be derived from another dialect"):
+    with pytest.warns(UserWarning, match="no home table recorded"):
         bim = _convert(semantic_model)
-    assert "measures" not in _table(bim, "T")
+    measure = _table(bim, "T")["measures"][0]
+    assert measure["expression"] == "BLANK()"
+    assert _annotation(measure, "OssieExpression") == "SUM(amount)"
+    assert _annotation(measure, "OssieExpressionDialect") == "ANSI_SQL"
 
 
 def test_a_metric_without_a_home_table_lands_on_the_first_table():
@@ -681,46 +719,32 @@ def test_a_stash_this_converter_understands_is_replayed():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("construct", ["ai_context", "label"])
-def test_an_ossie_field_construct_power_bi_cannot_hold_is_reported(construct):
+def test_an_ossie_field_construct_power_bi_cannot_hold_is_reported():
     """These are dropped outright, so silence would be real data loss."""
     semantic_model = _minimal()
-    semantic_model["datasets"][0]["fields"][0][construct] = "something"
-    with pytest.warns(UserWarning, match=construct):
+    semantic_model["datasets"][0]["fields"][0]["label"] = "something"
+    with pytest.warns(UserWarning, match="label"):
         _convert(semantic_model)
 
 
-def test_ai_context_is_reported_at_every_level():
+def test_ai_context_is_saved_as_annotations_on_semantic_model_objects():
     semantic_model = _minimal()
     semantic_model["ai_context"] = "model level"
-    semantic_model["datasets"][0]["ai_context"] = "dataset level"
-    with pytest.warns(UserWarning) as caught:
-        _convert(semantic_model)
-    scopes = {
-        str(w.message).split("]")[0].lstrip("[")
-        for w in caught
-        if "ai_context" in str(w.message)
-    }
-    assert scopes == {"model", "dataset 'T'"}
+    dataset = semantic_model["datasets"][0]
+    dataset["ai_context"] = {"instructions": "dataset level"}
+    dataset["fields"][0]["ai_context"] = "field level"
+    semantic_model["metrics"] = [
+        {
+            "name": "Rows",
+            "expression": make_expression("COUNTROWS(T)", "DAX"),
+            "ai_context": "metric level",
+        }
+    ]
 
-
-def test_a_dropped_construct_says_it_was_dropped_not_preserved():
-    """The two directions lose things differently and must not claim otherwise."""
-    semantic_model = _minimal()
-    semantic_model["ai_context"] = "x"
-    with pytest.warns(UserWarning) as caught:
-        _convert(semantic_model)
-    message = next(str(w.message) for w in caught if "ai_context" in str(w.message))
-    assert "dropped" in message
-    assert "preserved" not in message
-
-
-def test_the_export_names_power_bi_as_the_model_that_cannot_hold_it():
-    """The import says 'no Apache Ossie counterpart'; the export must say the reverse."""
-    semantic_model = _minimal()
-    semantic_model["ai_context"] = "x"
-    with pytest.warns(UserWarning) as caught:
-        _convert(semantic_model)
-    message = next(str(w.message) for w in caught if "ai_context" in str(w.message))
-    assert "no Power BI counterpart" in message
-    assert "Apache Ossie counterpart" not in message
+    with pytest.warns(UserWarning, match="no home table recorded"):
+        bim = _convert(semantic_model)
+    table = _table(bim, "T")
+    assert _annotation(bim["model"], "OssieAIContext") == "model level"
+    assert _annotation(table, "OssieAIContext") == '{"instructions": "dataset level"}'
+    assert _annotation(_column(table, "C"), "OssieAIContext") == "field level"
+    assert _annotation(table["measures"][0], "OssieAIContext") == "metric level"
