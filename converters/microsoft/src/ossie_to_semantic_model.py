@@ -40,7 +40,6 @@ are represented in the TMSL model.
 
 import json
 import re
-
 import yaml
 
 from _common import (

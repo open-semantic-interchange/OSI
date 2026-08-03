@@ -113,6 +113,48 @@ def test_exports_only_user_facing_tables(model):
     assert [d["name"] for d in model["datasets"]] == ["Sales", "Customer", "Calendar"]
 
 
+def test_calculation_group_is_skipped_with_a_warning():
+    bim = {
+        "name": "m",
+        "model": {
+            "tables": [
+                {
+                    "name": "Time Intelligence",
+                    "calculationGroup": {"precedence": 0},
+                }
+            ]
+        },
+    }
+    with pytest.warns(UserWarning, match="calculation groups are not converted"):
+        document = build_ossie_document(bim)
+    assert document["semantic_model"][0]["datasets"] == []
+
+
+def test_calculated_table_is_skipped_with_a_warning():
+    bim = {
+        "name": "m",
+        "model": {
+            "tables": [
+                {
+                    "name": "Calculated Table",
+                    "partitions": [
+                        {
+                            "name": "Calculated Table",
+                            "source": {
+                                "type": "calculated",
+                                "expression": "CALENDAR(DATE(2020, 1, 1), TODAY())",
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+    }
+    with pytest.warns(UserWarning, match="calculated tables are not converted"):
+        document = build_ossie_document(bim)
+    assert document["semantic_model"][0]["datasets"] == []
+
+
 def test_row_number_column_is_skipped(model):
     assert "RowNumber" not in [f["name"] for f in _dataset(model, "Sales")["fields"]]
 
