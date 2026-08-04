@@ -157,8 +157,9 @@ def test_a_dax_expression_becomes_a_calculated_column(bim_out):
     column = _column(_table(bim_out, "Sales"), "AmountWithTax")
     assert column["type"] == "calculated"
     assert column["expression"] == "Sales[Amount] * 1.2"
-    assert _annotation(column, "OssieExpression") == "Sales[Amount] * 1.2"
-    assert _annotation(column, "OssieExpressionDialect") == "DAX"
+    # DAX is written straight into `expression`, so annotating it would duplicate the
+    # expression and make a model that merely round-tripped differ from the original.
+    assert "annotations" not in column
 
 
 def test_a_computed_sql_expression_becomes_an_annotated_calculated_column():
@@ -247,6 +248,60 @@ def test_a_query_source_uses_an_import_partition():
     assert "Sql.Database" in "\n".join(partition["source"]["expression"])
 
 
+@pytest.mark.parametrize(
+    ("source", "schema", "entity"),
+    [
+        ("warehouse.sales.orders", "sales", "orders"),
+        ('"my schema"."my table"', "my schema", "my table"),
+        ("[bracketed schema].[bracketed table]", "bracketed schema", "bracketed table"),
+        ("`backtick schema`.`backtick table`", "backtick schema", "backtick table"),
+    ],
+)
+def test_a_delimited_qualified_source_keeps_its_parts(source, schema, entity):
+    """A dot inside a delimiter is part of the name, not a separator."""
+    semantic_model = _minimal()
+    semantic_model["datasets"][0]["source"] = source
+    partition = _table(_convert(semantic_model), "T")["partitions"][0]
+
+    assert partition["mode"] == "directLake"
+    assert partition["source"]["schemaName"] == schema
+    assert partition["source"]["entityName"] == entity
+
+
+def test_an_over_qualified_source_falls_back_to_an_import_partition():
+    """More than database.schema.table is not a reference this converter can resolve."""
+    semantic_model = _minimal()
+    semantic_model["datasets"][0]["source"] = "a.b.c.d"
+    with pytest.warns(UserWarning, match="Direct Lake cannot read a query source"):
+        bim = _convert(semantic_model)
+
+    assert _table(bim, "T")["partitions"][0]["mode"] == "import"
+
+
+def test_an_unqualified_source_names_the_entity_without_inventing_a_schema():
+    """Direct Lake resolves the default schema itself; guessing one could be wrong."""
+    semantic_model = _minimal()
+    semantic_model["datasets"][0]["source"] = "orders"
+    partition = _table(_convert(semantic_model), "T")["partitions"][0]
+
+    assert partition["source"]["entityName"] == "orders"
+    assert "schemaName" not in partition["source"]
+
+
+def test_a_missing_onelake_location_is_reported_rather_than_assumed():
+    document = {"version": OSSIE_VERSION, "semantic_model": [_minimal()]}
+    with pytest.warns(UserWarning, match="placeholder ids"):
+        bim = convert_ossie_to_semantic_model(document, source={"workspaceId": "w"})
+
+    assert "expression" in bim["model"]["expressions"][0]
+
+
+def test_a_non_mapping_onelake_location_is_rejected():
+    document = {"version": OSSIE_VERSION, "semantic_model": [_minimal()]}
+    with pytest.raises(TypeError, match="workspaceId and itemId"):
+        convert_ossie_to_semantic_model(document, source="workspace/item")
+
+
 # --- measures --------------------------------------------------------------
 
 
@@ -254,8 +309,8 @@ def test_a_metric_returns_to_its_home_table(bim_out):
     measures = {m["name"]: m for m in _table(bim_out, "Sales")["measures"]}
     assert measures["Total Sales"]["expression"] == "SUM ( Sales[Amount] )"
     assert measures["Total Sales"]["formatString"] == "\\$#,0.00"
-    assert _annotation(measures["Total Sales"], "OssieExpression") == "SUM ( Sales[Amount] )"
-    assert _annotation(measures["Total Sales"], "OssieExpressionDialect") == "DAX"
+    # A DAX measure needs no annotation; see the calculated column test above.
+    assert "annotations" not in measures["Total Sales"]
 
 
 def test_a_metric_without_a_dax_expression_becomes_an_annotated_measure():

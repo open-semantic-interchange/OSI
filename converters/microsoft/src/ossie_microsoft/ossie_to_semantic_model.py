@@ -328,12 +328,27 @@ def _m_expression(source):
 
 
 def _table_reference_parts(source):
-    """Split a qualified table reference into identifier parts, or None for a query."""
+    """Split a qualified table reference into identifier parts, or None for a query.
+
+    A delimited part (``[x]``, ``"x"`` or ```x```) may legally contain spaces and
+    punctuation, so only undelimited parts are held to the bare-identifier rule.
+    Rejecting a delimited name here would send a perfectly good table reference down
+    the query branch and emit it as SQL it was never meant to be.
+    """
     if _QUERY_START_RE.match(source):
         return None
-    parts = [_unquote(part.strip()) for part in _split_qualified_name(source)]
-    if not parts or len(parts) > 3 or not all(_TABLE_IDENTIFIER_RE.match(p) for p in parts):
+    raw = [part.strip() for part in _split_qualified_name(source)]
+    if not raw or len(raw) > 3:
         return None
+    parts = []
+    for part in raw:
+        delimited = _DELIMITED_RE.match(part)
+        if delimited is None and not _TABLE_IDENTIFIER_RE.match(part):
+            return None
+        unquoted = _unquote(part)
+        if not unquoted:
+            return None
+        parts.append(unquoted)
     return parts
 
 
@@ -639,6 +654,16 @@ def _endpoints_exist(scope, table_columns, from_table, from_column, to_table, to
 
 
 def _apply_expression_annotations(target, dialect, expression):
+    """Record the authored expression when TMSL cannot hold it natively.
+
+    A DAX expression is written straight into the TMSL ``expression`` property, so
+    annotating it would only duplicate what is already there and would make a model
+    that merely round-tripped through Apache Ossie differ from the original. Any other
+    dialect is not something the engine can evaluate, so the authored text and its
+    dialect are recorded to survive the trip back.
+    """
+    if dialect == DIALECT_DAX:
+        return
     _set_annotation(target, DIALECT_ANNOTATION, dialect)
     _set_annotation(target, EXPRESSION_ANNOTATION, expression)
 
