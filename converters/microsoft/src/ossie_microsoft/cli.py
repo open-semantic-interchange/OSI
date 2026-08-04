@@ -36,9 +36,9 @@ import warnings
 
 import yaml
 
-from _common import LOGGER, ConversionError
-from ossie_to_semantic_model import convert_ossie_to_semantic_model
-from semantic_model_to_ossie import convert_semantic_model_to_ossie
+from ._common import LOGGER, ConversionError
+from .ossie_to_semantic_model import convert_ossie_to_semantic_model
+from .semantic_model_to_ossie import convert_semantic_model_to_ossie
 
 
 class _CountingHandler(logging.Handler):

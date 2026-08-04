@@ -25,6 +25,10 @@ dev = [
     "pytest-cov>=5.0",
     "jsonschema>=4.0",
     "ruff>=0.11.5",
+    # Used by tests/test_packaging.py to inspect the built wheel.
+    "build>=1.2",
+    "hatchling",
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project]
@@ -32,6 +36,10 @@ name = "apache-ossie-microsoft"
 version = "0.2.0.dev0"
 description = "Converter between Microsoft Power BI / Fabric semantic models (TMSL) and Apache Ossie semantic models"
 authors = [{ name = "Apache Software Foundation", email = "dev@ossie.apache.org" }]
+maintainers = [
+    { name = "Michael Kovalsky", email = "mikova@microsoft.com" },
+    { name = "Markus Cozowicz", email = "marcozo@microsoft.com" },
+]
 requires-python = ">=3.10"
 readme = "README.md"
 license = "Apache-2.0"
@@ -48,20 +56,14 @@ dependencies = [
 ]
 
 [project.scripts]
-ossie-microsoft = "cli:main"
+ossie-microsoft = "ossie_microsoft.cli:main"
 
 [project.urls]
 homepage = "https://ossie.apache.org/"
 repository = "https://github.com/apache/ossie/"
 
 [tool.hatch.build.targets.wheel]
-packages = [
-    "src/_common.py",
-    "src/cli.py",
-    "src/ossie_microsoft.py",
-    "src/ossie_to_semantic_model.py",
-    "src/semantic_model_to_ossie.py",
-]
+packages = ["src/ossie_microsoft"]
 
 [tool.ruff]
 line-length = 100
@@ -80,13 +82,7 @@ filterwarnings = ["ignore::UserWarning"]
 
 [tool.coverage.run]
 branch = true
-source = [
-    "_common",
-    "cli",
-    "ossie_microsoft",
-    "ossie_to_semantic_model",
-    "semantic_model_to_ossie",
-]
+source = ["ossie_microsoft"]
 
 [tool.coverage.report]
 # The converter's contract is that every lossy branch reports itself. An

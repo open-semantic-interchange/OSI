@@ -27,7 +27,7 @@ import json
 import pytest
 
 from ossie_microsoft import convert_ossie_to_semantic_model
-from _common import (
+from ossie_microsoft._common import (
     DIALECT_ANSI,
     OSSIE_VERSION,
     VENDOR,
@@ -36,7 +36,7 @@ from _common import (
     read_stash,
     write_stash,
 )
-from semantic_model_to_ossie import build_ossie_document
+from ossie_microsoft.semantic_model_to_ossie import build_ossie_document
 
 
 def _model(**overrides):
@@ -285,7 +285,7 @@ def test_a_duplicate_relationship_name_is_reported_and_preserved():
 
 
 def test_the_cli_writes_to_stdout_without_an_output_path(tmp_path, capsys):
-    from cli import main
+    from ossie_microsoft.cli import main
 
     src = tmp_path / "m.bim"
     src.write_text(json.dumps({"name": "m", "model": {"tables": []}}), encoding="utf-8")
@@ -294,14 +294,14 @@ def test_the_cli_writes_to_stdout_without_an_output_path(tmp_path, capsys):
 
 
 def test_the_cli_reports_a_bad_file_without_a_traceback(tmp_path, capsys):
-    from cli import main
+    from ossie_microsoft.cli import main
 
     assert main(["import", "-i", str(tmp_path / "missing.bim")]) == 1
     assert capsys.readouterr().err.startswith("Error:")
 
 
 def test_the_cli_reports_invalid_json_without_a_traceback(tmp_path, capsys):
-    from cli import main
+    from ossie_microsoft.cli import main
 
     src = tmp_path / "m.bim"
     src.write_text("{not json", encoding="utf-8")

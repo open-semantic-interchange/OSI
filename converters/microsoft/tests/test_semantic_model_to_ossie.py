@@ -26,8 +26,8 @@ import pytest
 import yaml
 
 from ossie_microsoft import convert_ossie_to_semantic_model, convert_semantic_model_to_ossie
-from _common import VENDOR, read_stash
-from semantic_model_to_ossie import build_ossie_document
+from ossie_microsoft._common import VENDOR, read_stash
+from ossie_microsoft.semantic_model_to_ossie import build_ossie_document
 
 FIXTURES = Path(__file__).parent / "fixtures"
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -66,7 +66,7 @@ def test_public_module_exports_the_converters():
 
 
 def test_cli_writes_ossie_yaml(tmp_path):
-    from cli import main
+    from ossie_microsoft.cli import main
 
     out = tmp_path / "model.yaml"
     assert main(["import", "-i", str(FIXTURES / "sales_model.bim"), "-o", str(out)]) == 0
@@ -75,7 +75,7 @@ def test_cli_writes_ossie_yaml(tmp_path):
 
 
 def test_cli_reports_errors_without_traceback(tmp_path, capsys):
-    from cli import main
+    from ossie_microsoft.cli import main
 
     bad = tmp_path / "bad.bim"
     bad.write_text('{"not_a_model": true}', encoding="utf-8")
@@ -545,7 +545,7 @@ def test_every_report_also_reaches_the_log(bim, caplog):
 
 
 def test_the_cli_reports_unconvertible_constructs_on_stderr(tmp_path, capsys):
-    from cli import main
+    from ossie_microsoft.cli import main
 
     out = tmp_path / "model.yaml"
     assert main(["import", "-i", str(FIXTURES / "sales_model.bim"), "-o", str(out)]) == 0
@@ -556,7 +556,7 @@ def test_the_cli_reports_unconvertible_constructs_on_stderr(tmp_path, capsys):
 
 def test_the_cli_reports_each_construct_once(tmp_path, capsys):
     """warn() feeds both a warning and a log; the CLI must not print both."""
-    from cli import main
+    from ossie_microsoft.cli import main
 
     out = tmp_path / "model.yaml"
     main(["import", "-i", str(FIXTURES / "sales_model.bim"), "-o", str(out)])
@@ -565,7 +565,7 @@ def test_the_cli_reports_each_construct_once(tmp_path, capsys):
 
 
 def test_quiet_suppresses_the_report(tmp_path, capsys):
-    from cli import main
+    from ossie_microsoft.cli import main
 
     out = tmp_path / "model.yaml"
     assert main(["import", "-q", "-i", str(FIXTURES / "sales_model.bim"), "-o", str(out)]) == 0
@@ -574,7 +574,7 @@ def test_quiet_suppresses_the_report(tmp_path, capsys):
 
 
 def test_strict_fails_when_something_could_not_be_converted(tmp_path):
-    from cli import main
+    from ossie_microsoft.cli import main
 
     out = tmp_path / "model.yaml"
     assert main(
@@ -585,7 +585,7 @@ def test_strict_fails_when_something_could_not_be_converted(tmp_path):
 
 
 def test_strict_succeeds_on_a_clean_model(tmp_path):
-    from cli import main
+    from ossie_microsoft.cli import main
 
     src = tmp_path / "clean.bim"
     src.write_text(
@@ -618,7 +618,7 @@ def test_strict_succeeds_on_a_clean_model(tmp_path):
 
 def test_the_flags_work_before_and_after_the_subcommand(tmp_path):
     """Nobody expects to have to put a global flag before the subcommand."""
-    from cli import main
+    from ossie_microsoft.cli import main
 
     src = str(FIXTURES / "sales_model.bim")
     before = main(["--strict", "import", "-i", src, "-o", str(tmp_path / "a.yaml")])
@@ -628,8 +628,8 @@ def test_the_flags_work_before_and_after_the_subcommand(tmp_path):
 
 def test_the_cli_leaves_no_handler_behind(tmp_path):
     """A library caller importing the CLI must not inherit its stderr handler."""
-    from _common import LOGGER
-    from cli import main
+    from ossie_microsoft._common import LOGGER
+    from ossie_microsoft.cli import main
 
     before = list(LOGGER.handlers)
     main(["import", "-q", "-i", str(FIXTURES / "sales_model.bim"), "-o", str(tmp_path / "o.yaml")])

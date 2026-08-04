@@ -28,7 +28,7 @@ import re
 
 import yaml
 
-from _common import warn
+from ._common import warn
 
 OSSIE_VERSION = "0.2.0.dev0"
 DIALECT_DAX = "DAX"

@@ -24,9 +24,9 @@ and Apache Ossie semantic models. Pure offline transforms; no Power BI connectio
     )
 """
 
-from _common import ConversionError
-from ossie_to_semantic_model import convert_ossie_to_semantic_model
-from semantic_model_to_ossie import build_ossie_document, convert_semantic_model_to_ossie
+from ._common import ConversionError
+from .ossie_to_semantic_model import convert_ossie_to_semantic_model
+from .semantic_model_to_ossie import build_ossie_document, convert_semantic_model_to_ossie
 
 __all__ = [
     "ConversionError",

@@ -40,12 +40,12 @@ are represented in the TMSL model.
 
 import json
 import re
+
 import yaml
 
-from _common import (
+from ._common import (
     DATE_ONLY_FORMAT,
     DEFAULT_COMPATIBILITY_LEVEL,
-    DIALECT_ANSI,
     DIALECT_DAX,
     IDENTIFIER_RE,
     OSSIE_TO_TMSL_DATATYPE,
