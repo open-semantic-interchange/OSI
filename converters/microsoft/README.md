@@ -262,12 +262,13 @@ a single aggregate over one unqualified column, plus `COUNT(*)`.
 | `VAR_POP(x)` | `VAR.P('T'[X])` |
 | `MEDIAN(x)` | `MEDIAN('T'[X])` |
 
-Two of these depart from the summary table in `core-spec/expression_language.md`,
-because the obvious mapping is not equivalent on NULL handling. SQL `COUNT(x)` counts
-non-NULL values of any type, but DAX `COUNT` documents `TRUE`/`FALSE` columns as
-unsupported, so `COUNTA` is the faithful equivalent. SQL `COUNT(DISTINCT x)` excludes
-NULL, but DAX `DISTINCTCOUNT` counts BLANK as a distinct value and so is off by one on
-any nullable column; `DISTINCTCOUNTNOBLANK` is the equivalent.
+Two of these are not the same-named DAX function, because DAX treats BLANK differently
+from SQL's NULL. SQL `COUNT(x)` counts non-NULL values of any type, but DAX `COUNT`
+documents `TRUE`/`FALSE` columns as unsupported, so `COUNTA` is the faithful
+equivalent. SQL `COUNT(DISTINCT x)` excludes NULL, but DAX `DISTINCTCOUNT` counts BLANK
+as a distinct value and so is off by one on any nullable column;
+`DISTINCTCOUNTNOBLANK` is the equivalent. Both match the mapping table in
+`core-spec/expression_language.md`.
 
 Two further differences are deliberately left in place, because both fail visibly
 rather than returning a quietly wrong number. SQL `COUNT` returns 0 over an empty set
