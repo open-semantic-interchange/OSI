@@ -47,7 +47,7 @@ def _translate(sql, dialect="ANSI_SQL", table="Sales"):
         ("SUM(amount)", "SUM('Sales'[Amount])"),
         ("MIN(amount)", "MIN('Sales'[Amount])"),
         ("MAX(amount)", "MAX('Sales'[Amount])"),
-        ("COUNT(amount)", "COUNT('Sales'[Amount])"),
+        ("COUNT(amount)", "COUNTA('Sales'[Amount])"),
         ("AVG(amount)", "AVERAGE('Sales'[Amount])"),
         ("MEDIAN(amount)", "MEDIAN('Sales'[Amount])"),
         ("STDDEV(amount)", "STDEV.S('Sales'[Amount])"),
@@ -55,7 +55,7 @@ def _translate(sql, dialect="ANSI_SQL", table="Sales"):
         ("STDDEV_POP(amount)", "STDEV.P('Sales'[Amount])"),
         ("VARIANCE(amount)", "VAR.S('Sales'[Amount])"),
         ("VAR_POP(amount)", "VAR.P('Sales'[Amount])"),
-        ("COUNT(DISTINCT cust)", "DISTINCTCOUNT('Sales'[Customer Id])"),
+        ("COUNT(DISTINCT cust)", "DISTINCTCOUNTNOBLANK('Sales'[Customer Id])"),
         ("COUNT(*)", "COUNTROWS('Sales')"),
         ("sum(amount)", "SUM('Sales'[Amount])"),
         ("SUM(amount) AS total", "SUM('Sales'[Amount])"),
@@ -77,6 +77,7 @@ def test_a_curated_aggregate_is_translated(sql, dax):
         "SUM(DISTINCT amount)",
         "AVG(DISTINCT amount)",
         "COUNT(DISTINCT amount, cust)",
+        "COUNT(amount, cust)",
         "COUNT(DISTINCT *)",
         "PERCENTILE_CONT(amount, 0.5)",
         "SUM(amount) FILTER (WHERE amount > 1)",
@@ -100,6 +101,30 @@ def test_count_star_needs_an_unambiguous_table():
         None,
         "'COUNT(*)' needs exactly one dataset to count rows of",
     )
+
+
+def test_count_maps_to_counta_not_count():
+    """DAX `COUNT` documents TRUE/FALSE columns as unsupported, so it is not the
+    equivalent of SQL `COUNT(x)` for an arbitrary column. `COUNTA` counts non-blank
+    values of any type, which is what SQL means."""
+    dax, _ = _translate("COUNT(amount)")
+    assert dax.startswith("COUNTA(")
+
+
+def test_a_multi_argument_count_is_refused_not_truncated():
+    """Snowflake and Databricks `COUNT(a, b)` counts rows where both are non-NULL.
+    sqlglot exposes only the first argument as `this`, so reading it alone would
+    silently overcount."""
+    dax, reason = _translate("COUNT(amount, cust)")
+    assert dax is None
+    assert "multiple arguments" in reason
+
+
+def test_count_distinct_excludes_blank_like_sql_excludes_null():
+    """SQL `COUNT(DISTINCT x)` excludes NULL, but DAX `DISTINCTCOUNT` counts BLANK as
+    a distinct value, so it is off by one on any nullable column."""
+    dax, _ = _translate("COUNT(DISTINCT cust)")
+    assert dax.startswith("DISTINCTCOUNTNOBLANK(")
 
 
 @pytest.mark.parametrize("dialect", ["SNOWFLAKE", "DATABRICKS", "BIGQUERY"])

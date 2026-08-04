@@ -251,15 +251,29 @@ a single aggregate over one unqualified column, plus `COUNT(*)`.
 
 | Apache Ossie (SQL) | Power BI (DAX) |
 | :---- | :---- |
-| `SUM(x)` / `MIN(x)` / `MAX(x)` / `COUNT(x)` | `SUM('T'[X])` and so on |
+| `SUM(x)` / `MIN(x)` / `MAX(x)` | `SUM('T'[X])` and so on |
+| `COUNT(x)` | `COUNTA('T'[X])` |
 | `AVG(x)` | `AVERAGE('T'[X])` |
-| `COUNT(DISTINCT x)` | `DISTINCTCOUNT('T'[X])` |
+| `COUNT(DISTINCT x)` | `DISTINCTCOUNTNOBLANK('T'[X])` |
 | `COUNT(*)` | `COUNTROWS('T')` |
 | `STDDEV(x)` / `STDDEV_SAMP(x)` | `STDEV.S('T'[X])` |
 | `STDDEV_POP(x)` | `STDEV.P('T'[X])` |
 | `VARIANCE(x)` / `VAR_SAMP(x)` | `VAR.S('T'[X])` |
 | `VAR_POP(x)` | `VAR.P('T'[X])` |
 | `MEDIAN(x)` | `MEDIAN('T'[X])` |
+
+Two of these depart from the summary table in `core-spec/expression_language.md`,
+because the obvious mapping is not equivalent on NULL handling. SQL `COUNT(x)` counts
+non-NULL values of any type, but DAX `COUNT` documents `TRUE`/`FALSE` columns as
+unsupported, so `COUNTA` is the faithful equivalent. SQL `COUNT(DISTINCT x)` excludes
+NULL, but DAX `DISTINCTCOUNT` counts BLANK as a distinct value and so is off by one on
+any nullable column; `DISTINCTCOUNTNOBLANK` is the equivalent.
+
+Two further differences are deliberately left in place, because both fail visibly
+rather than returning a quietly wrong number. SQL `COUNT` returns 0 over an empty set
+where DAX returns BLANK -- coercing to 0 would defeat Power BI's convention of hiding
+empty rows in a visual. And the DAX deviation and variance functions raise an error
+when fewer than two non-blank rows remain, where SQL yields NULL or 0.
 
 `ANSI_SQL`, `SNOWFLAKE`, `DATABRICKS` and `BIGQUERY` expressions are parsed; `MDX`,
 `TABLEAU` and `MAQL` are not SQL and are not attempted.

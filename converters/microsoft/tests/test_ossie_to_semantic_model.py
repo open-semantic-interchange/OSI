@@ -346,7 +346,7 @@ def _metric_dax(sql, dialect="ANSI_SQL"):
         ("SUM(c)", "SUM('T'[C])"),
         ("MIN(c)", "MIN('T'[C])"),
         ("MAX(c)", "MAX('T'[C])"),
-        ("COUNT(c)", "COUNT('T'[C])"),
+        ("COUNT(c)", "COUNTA('T'[C])"),
         # DAX renames these, so a passthrough would be silently wrong.
         ("AVG(c)", "AVERAGE('T'[C])"),
         ("STDDEV(c)", "STDEV.S('T'[C])"),
@@ -354,7 +354,7 @@ def _metric_dax(sql, dialect="ANSI_SQL"):
         ("VARIANCE(c)", "VAR.S('T'[C])"),
         ("VAR_POP(c)", "VAR.P('T'[C])"),
         ("MEDIAN(c)", "MEDIAN('T'[C])"),
-        ("COUNT(DISTINCT c)", "DISTINCTCOUNT('T'[C])"),
+        ("COUNT(DISTINCT c)", "DISTINCTCOUNTNOBLANK('T'[C])"),
         ("COUNT(*)", "COUNTROWS('T')"),
         # The field is named `C` but its source column is `c`; DAX must use the
         # model name, not the physical one.
