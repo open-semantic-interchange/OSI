@@ -240,12 +240,17 @@ Purely presentational properties (`isHidden`, `displayFolder`, `formatString`) a
 preserved just as faithfully but are not reported: a warning on every cosmetic property
 would bury the ones that matter.
 
-In the other direction, Apache Ossie's `ai_context` is stored in an
-`OssieAIContext` annotation. Metric expressions and calculated field expressions are
-stored in `OssieExpression` and `OssieExpressionDialect` annotations. Power BI executes
-the authored DAX directly; expressions in other dialects use `BLANK()` as a valid DAX
-placeholder while retaining the original expression in annotations. A `label` has no
-TMSL equivalent and is reported as dropped.
+In the other direction, Apache Ossie's `ai_context` is stored in an `OssieAIContext`
+annotation. A `label` has no TMSL equivalent and is reported as dropped.
+
+Power BI evaluates a measure or calculated column *only* as DAX -- there is no TMSL
+property that can hold an expression in another dialect. So a metric or calculated
+field whose expression is not already `DAX` is **reported and skipped** rather than
+emitted with a stand-in such as `BLANK()`. A stand-in would produce a model that loads
+without error and then answers every query with a wrong number; a missing measure is
+something a modeller notices immediately. The authored expression is untouched in the
+Apache Ossie source, so re-running the conversion after adding a `DAX` expression
+picks it up.
 
 ## Testing
 

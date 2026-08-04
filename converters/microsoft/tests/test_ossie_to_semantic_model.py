@@ -162,16 +162,16 @@ def test_a_dax_expression_becomes_a_calculated_column(bim_out):
     assert "annotations" not in column
 
 
-def test_a_computed_sql_expression_becomes_an_annotated_calculated_column():
+def test_a_computed_sql_expression_is_reported_and_skipped():
     semantic_model = _minimal()
     semantic_model["datasets"][0]["fields"][0]["expression"] = make_expression(
         "SUM(amount) / COUNT(*)", "ANSI_SQL"
     )
-    column = _column(_table(_convert(semantic_model), "T"), "C")
-    assert column["type"] == "calculated"
-    assert column["expression"] == "BLANK()"
-    assert _annotation(column, "OssieExpression") == "SUM(amount) / COUNT(*)"
-    assert _annotation(column, "OssieExpressionDialect") == "ANSI_SQL"
+    with pytest.warns(UserWarning, match="cannot be translated to DAX"):
+        table = _table(_convert(semantic_model), "T")
+    # No stand-in expression: a `BLANK()` column would load cleanly and then answer
+    # every query with a wrong number, which is worse than an absent column.
+    assert not any(column["name"] == "C" for column in table.get("columns", []))
 
 
 def test_a_date_field_carries_a_date_only_format_string():
@@ -313,7 +313,7 @@ def test_a_metric_returns_to_its_home_table(bim_out):
     assert "annotations" not in measures["Total Sales"]
 
 
-def test_a_metric_without_a_dax_expression_becomes_an_annotated_measure():
+def test_a_metric_without_a_dax_expression_is_reported_and_skipped():
     semantic_model = _minimal(
         metrics=[
             {
@@ -322,12 +322,10 @@ def test_a_metric_without_a_dax_expression_becomes_an_annotated_measure():
             }
         ]
     )
-    with pytest.warns(UserWarning, match="no home table recorded"):
+    with pytest.warns(UserWarning, match="cannot be translated to DAX"):
         bim = _convert(semantic_model)
-    measure = _table(bim, "T")["measures"][0]
-    assert measure["expression"] == "BLANK()"
-    assert _annotation(measure, "OssieExpression") == "SUM(amount)"
-    assert _annotation(measure, "OssieExpressionDialect") == "ANSI_SQL"
+    # Skipped before a home table is even chosen, so no measure is emitted at all.
+    assert "measures" not in _table(bim, "T")
 
 
 def test_a_metric_without_a_home_table_lands_on_the_first_table():

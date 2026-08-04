@@ -75,9 +75,24 @@ _MEASURE_CONTROL_KEYS = frozenset({"table", "name"})
 _COLUMN_CONTROL_KEYS = frozenset({"dataType", "sourceColumn"})
 
 AI_CONTEXT_ANNOTATION = "OssieAIContext"
-DIALECT_ANNOTATION = "OssieExpressionDialect"
-EXPRESSION_ANNOTATION = "OssieExpression"
-PLACEHOLDER_EXPRESSION = "BLANK()"
+
+
+def _untranslatable(scope, kind, dialect):
+    """Report an expression this converter cannot translate into DAX, and skip it.
+
+    Power BI has no way to hold a non-DAX expression: whatever lands in `expression`
+    is evaluated as DAX. Emitting a stand-in such as `BLANK()` would produce a model
+    that loads cleanly and answers every query with the wrong number, which is far
+    worse than an absent object a modeller can see is missing. So the object is left
+    out and the original expression is preserved verbatim in the Apache Ossie source.
+    """
+    warn(
+        scope,
+        f"a '{dialect}' expression cannot be translated to DAX, and Power BI "
+        f"evaluates a measure or calculated column only as DAX; the {kind} is "
+        f"skipped rather than given a stand-in expression that would silently "
+        f"return a wrong result. Supply a '{DIALECT_DAX}' expression to convert it.",
+    )
 
 # Apache Ossie temporal types that Power BI cannot represent faithfully. Power BI stores
 # every temporal value as `dateTime`, so a time-of-day type gains a date part and a
@@ -439,10 +454,11 @@ def _convert_field(field, dataset_scope):
         column["sourceColumn"] = source_column
     else:
         dialect, expression = _preferred_expression(expressions)
+        if dialect != DIALECT_DAX:
+            _untranslatable(scope, "calculated column", dialect)
+            return None
         column["type"] = "calculated"
-        column["expression"] = (
-            _tmsl_text(expression) if dialect == DIALECT_DAX else PLACEHOLDER_EXPRESSION
-        )
+        column["expression"] = _tmsl_text(expression)
 
     datatype = _column_datatype(field, stash, scope)
     if datatype:
@@ -460,8 +476,6 @@ def _convert_field(field, dataset_scope):
     for key, value in stash.items():
         if key not in _COLUMN_CONTROL_KEYS:
             column.setdefault(key, value)
-    if source_column is None:
-        _apply_expression_annotations(column, dialect, expression)
     _apply_ai_context(column, field.get("ai_context"))
     return column
 
@@ -545,6 +559,9 @@ def _apply_measures(tables, metrics):
             warn(scope, "metric has no expression; skipped")
             continue
         dialect, expression = _preferred_expression(expressions)
+        if dialect != DIALECT_DAX:
+            _untranslatable(scope, "measure", dialect)
+            continue
 
         table = by_name.get(stash.get("table"))
         if table is None:
@@ -559,9 +576,7 @@ def _apply_measures(tables, metrics):
 
         measure = {
             "name": stash.get("name", metric["name"]),
-            "expression": (
-                _tmsl_text(expression) if dialect == DIALECT_DAX else PLACEHOLDER_EXPRESSION
-            ),
+            "expression": _tmsl_text(expression),
         }
         if metric.get("description"):
             measure["description"] = metric["description"]
@@ -576,7 +591,6 @@ def _apply_measures(tables, metrics):
         for key, value in stash.items():
             if key not in _MEASURE_CONTROL_KEYS:
                 measure.setdefault(key, value)
-        _apply_expression_annotations(measure, dialect, expression)
         _apply_ai_context(measure, metric.get("ai_context"))
         table.setdefault("measures", []).append(measure)
 
@@ -651,21 +665,6 @@ def _endpoints_exist(scope, table_columns, from_table, from_column, to_table, to
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _apply_expression_annotations(target, dialect, expression):
-    """Record the authored expression when TMSL cannot hold it natively.
-
-    A DAX expression is written straight into the TMSL ``expression`` property, so
-    annotating it would only duplicate what is already there and would make a model
-    that merely round-tripped through Apache Ossie differ from the original. Any other
-    dialect is not something the engine can evaluate, so the authored text and its
-    dialect are recorded to survive the trip back.
-    """
-    if dialect == DIALECT_DAX:
-        return
-    _set_annotation(target, DIALECT_ANNOTATION, dialect)
-    _set_annotation(target, EXPRESSION_ANNOTATION, expression)
 
 
 def _apply_ai_context(target, ai_context):
