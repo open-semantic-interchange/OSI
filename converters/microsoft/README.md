@@ -243,14 +243,50 @@ would bury the ones that matter.
 In the other direction, Apache Ossie's `ai_context` is stored in an `OssieAIContext`
 annotation. A `label` has no TMSL equivalent and is reported as dropped.
 
-Power BI evaluates a measure or calculated column *only* as DAX -- there is no TMSL
-property that can hold an expression in another dialect. So a metric or calculated
-field whose expression is not already `DAX` is **reported and skipped** rather than
-emitted with a stand-in such as `BLANK()`. A stand-in would produce a model that loads
-without error and then answers every query with a wrong number; a missing measure is
-something a modeller notices immediately. The authored expression is untouched in the
-Apache Ossie source, so re-running the conversion after adding a `DAX` expression
-picks it up.
+### SQL metric expressions
+
+Power BI evaluates a measure *only* as DAX, so an Apache Ossie metric written in SQL
+has to be translated. The converter translates a deliberately narrow, unambiguous set:
+a single aggregate over one unqualified column, plus `COUNT(*)`.
+
+| Apache Ossie (SQL) | Power BI (DAX) |
+| :---- | :---- |
+| `SUM(x)` / `MIN(x)` / `MAX(x)` / `COUNT(x)` | `SUM('T'[X])` and so on |
+| `AVG(x)` | `AVERAGE('T'[X])` |
+| `COUNT(DISTINCT x)` | `DISTINCTCOUNT('T'[X])` |
+| `COUNT(*)` | `COUNTROWS('T')` |
+| `STDDEV(x)` / `STDDEV_SAMP(x)` | `STDEV.S('T'[X])` |
+| `STDDEV_POP(x)` | `STDEV.P('T'[X])` |
+| `VARIANCE(x)` / `VAR_SAMP(x)` | `VAR.S('T'[X])` |
+| `VAR_POP(x)` | `VAR.P('T'[X])` |
+| `MEDIAN(x)` | `MEDIAN('T'[X])` |
+
+`ANSI_SQL`, `SNOWFLAKE`, `DATABRICKS` and `BIGQUERY` expressions are parsed; `MDX`,
+`TABLEAU` and `MAQL` are not SQL and are not attempted.
+
+Note that DAX has no bare column reference, so a translation is only possible when the
+column resolves to exactly one field in exactly one dataset. A name that appears in two
+datasets is treated as untranslatable rather than guessed at.
+
+### What is not translated
+
+Everything outside that set is **reported and skipped** rather than approximated --
+arithmetic between aggregates (`SUM(a) / COUNT(*)`), aggregates over expressions
+(`SUM(a + b)`), `CASE`, window and filtered aggregates, qualified column references,
+and percentiles (whose DAX spelling depends on the interpolation the SQL does not
+state).
+
+A calculated *field* whose expression is not already DAX is likewise skipped, even when
+the same expression would translate as a metric: a calculated column evaluates in row
+context, where `SUM('T'[X])` returns the whole-column total on every row instead of the
+row's own value.
+
+The reason is that the alternative is worse. A stand-in expression such as `BLANK()`,
+or a plausible-looking but wrong translation, produces a model that deploys and
+refreshes without error and then answers every query with an incorrect number. A
+missing measure is something a modeller notices immediately. The authored expression is
+untouched in the Apache Ossie source, so re-running the conversion after adding a `DAX`
+expression picks it up.
 
 ## Testing
 

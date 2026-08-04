@@ -43,6 +43,7 @@ import re
 
 import yaml
 
+from . import _sql_to_dax as sql_to_dax
 from ._common import (
     DATE_ONLY_FORMAT,
     DEFAULT_COMPATIBILITY_LEVEL,
@@ -77,7 +78,7 @@ _COLUMN_CONTROL_KEYS = frozenset({"dataType", "sourceColumn"})
 AI_CONTEXT_ANNOTATION = "OssieAIContext"
 
 
-def _untranslatable(scope, kind, dialect):
+def _untranslatable(scope, kind, dialect, reason=None):
     """Report an expression this converter cannot translate into DAX, and skip it.
 
     Power BI has no way to hold a non-DAX expression: whatever lands in `expression`
@@ -86,9 +87,10 @@ def _untranslatable(scope, kind, dialect):
     worse than an absent object a modeller can see is missing. So the object is left
     out and the original expression is preserved verbatim in the Apache Ossie source.
     """
+    detail = f" ({reason})" if reason else ""
     warn(
         scope,
-        f"a '{dialect}' expression cannot be translated to DAX, and Power BI "
+        f"a '{dialect}' expression could not be translated to DAX{detail}, and Power BI "
         f"evaluates a measure or calculated column only as DAX; the {kind} is "
         f"skipped rather than given a stand-in expression that would silently "
         f"return a wrong result. Supply a '{DIALECT_DAX}' expression to convert it.",
@@ -455,6 +457,10 @@ def _convert_field(field, dataset_scope):
     else:
         dialect, expression = _preferred_expression(expressions)
         if dialect != DIALECT_DAX:
+            # A metric's SQL aggregate is translated (see `_sql_to_dax`), but a
+            # calculated column is not: it evaluates in row context, where `SUM(T[c])`
+            # returns the whole-column total on every row rather than the row's value.
+            # A translation that is right for a measure is wrong here.
             _untranslatable(scope, "calculated column", dialect)
             return None
         column["type"] = "calculated"
@@ -543,6 +549,39 @@ def _map_datatype(datatype, scope):
 # ---------------------------------------------------------------------------
 
 
+def _column_index(tables):
+    """Map each SQL-visible column name to its unique Power BI ``(table, column)``.
+
+    A name that occurs in more than one table is deliberately dropped: DAX must name
+    the table, and guessing which one a metric meant would be exactly the kind of
+    plausible-but-wrong output this converter refuses to produce.
+    """
+    seen = {}
+    for table in tables:
+        for column in table.get("columns") or []:
+            target = (table["name"], column["name"])
+            # A metric's SQL names the physical column, which TMSL carries as
+            # `sourceColumn`; DAX addresses the same column by its model `name`.
+            for key in {column.get("sourceColumn"), column["name"]}:
+                if key:
+                    seen.setdefault(key.casefold(), set()).add(target)
+    return {key: next(iter(hits)) for key, hits in seen.items() if len(hits) == 1}
+
+
+def _translate_metric_expression(expression, dialect, tables, scope):
+    """Translate a metric's SQL to DAX, or report why it could not be and return None."""
+    index = _column_index(tables)
+    dax, reason = sql_to_dax.translate(
+        expression,
+        dialect,
+        lambda name: index.get(name.casefold()),
+        lambda: tables[0]["name"] if len(tables) == 1 else None,
+    )
+    if dax is None:
+        _untranslatable(scope, "measure", dialect, reason)
+    return dax
+
+
 def _apply_measures(tables, metrics):
     """Attach Apache Ossie metrics to their home Power BI table as measures."""
     by_name = {table["name"]: table for table in tables}
@@ -559,9 +598,12 @@ def _apply_measures(tables, metrics):
             warn(scope, "metric has no expression; skipped")
             continue
         dialect, expression = _preferred_expression(expressions)
-        if dialect != DIALECT_DAX:
-            _untranslatable(scope, "measure", dialect)
-            continue
+        if dialect == DIALECT_DAX:
+            dax = _tmsl_text(expression)
+        else:
+            dax = _translate_metric_expression(expression, dialect, tables, scope)
+            if dax is None:
+                continue
 
         table = by_name.get(stash.get("table"))
         if table is None:
@@ -576,7 +618,7 @@ def _apply_measures(tables, metrics):
 
         measure = {
             "name": stash.get("name", metric["name"]),
-            "expression": _tmsl_text(expression),
+            "expression": dax,
         }
         if metric.get("description"):
             measure["description"] = metric["description"]

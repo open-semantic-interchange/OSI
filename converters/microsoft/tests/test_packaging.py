@@ -52,7 +52,13 @@ PACKAGE_DIR = SRC / PACKAGE
 
 #: Modules that live inside the package and must never be importable top-level.
 MODULES = frozenset(
-    {"_common", "cli", "ossie_to_semantic_model", "semantic_model_to_ossie"}
+    {
+        "_common",
+        "_sql_to_dax",
+        "cli",
+        "ossie_to_semantic_model",
+        "semantic_model_to_ossie",
+    }
 )
 
 

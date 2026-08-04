@@ -52,6 +52,7 @@ keywords = [
 ]
 dependencies = [
     "PyYAML>=6.0",
+    "sqlglot>=30.12.0",
 ]
 
 [project.scripts]

@@ -167,7 +167,7 @@ def test_a_computed_sql_expression_is_reported_and_skipped():
     semantic_model["datasets"][0]["fields"][0]["expression"] = make_expression(
         "SUM(amount) / COUNT(*)", "ANSI_SQL"
     )
-    with pytest.warns(UserWarning, match="cannot be translated to DAX"):
+    with pytest.warns(UserWarning, match="could not be translated to DAX"):
         table = _table(_convert(semantic_model), "T")
     # No stand-in expression: a `BLANK()` column would load cleanly and then answer
     # every query with a wrong number, which is worse than an absent column.
@@ -313,19 +313,105 @@ def test_a_metric_returns_to_its_home_table(bim_out):
     assert "annotations" not in measures["Total Sales"]
 
 
-def test_a_metric_without_a_dax_expression_is_reported_and_skipped():
+def test_a_metric_with_an_untranslatable_expression_is_reported_and_skipped():
     semantic_model = _minimal(
         metrics=[
             {
                 "name": "Revenue",
-                "expression": make_expression("SUM(amount)", "ANSI_SQL"),
+                "expression": make_expression("SUM(amount) / COUNT(*)", "ANSI_SQL"),
             }
         ]
     )
-    with pytest.warns(UserWarning, match="cannot be translated to DAX"):
+    with pytest.warns(UserWarning, match="could not be translated to DAX"):
         bim = _convert(semantic_model)
     # Skipped before a home table is even chosen, so no measure is emitted at all.
     assert "measures" not in _table(bim, "T")
+
+
+def _metric_dax(sql, dialect="ANSI_SQL"):
+    """Convert a single-metric model and return the DAX the measure was given."""
+    semantic_model = _minimal(
+        metrics=[{"name": "M", "expression": make_expression(sql, dialect)}]
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        bim = _convert(semantic_model)
+    measures = _table(bim, "T").get("measures") or []
+    return measures[0]["expression"] if measures else None
+
+
+@pytest.mark.parametrize(
+    ("sql", "dax"),
+    [
+        ("SUM(c)", "SUM('T'[C])"),
+        ("MIN(c)", "MIN('T'[C])"),
+        ("MAX(c)", "MAX('T'[C])"),
+        ("COUNT(c)", "COUNT('T'[C])"),
+        # DAX renames these, so a passthrough would be silently wrong.
+        ("AVG(c)", "AVERAGE('T'[C])"),
+        ("STDDEV(c)", "STDEV.S('T'[C])"),
+        ("STDDEV_POP(c)", "STDEV.P('T'[C])"),
+        ("VARIANCE(c)", "VAR.S('T'[C])"),
+        ("VAR_POP(c)", "VAR.P('T'[C])"),
+        ("MEDIAN(c)", "MEDIAN('T'[C])"),
+        ("COUNT(DISTINCT c)", "DISTINCTCOUNT('T'[C])"),
+        ("COUNT(*)", "COUNTROWS('T')"),
+        # The field is named `C` but its source column is `c`; DAX must use the
+        # model name, not the physical one.
+        ("sum(C)", "SUM('T'[C])"),
+    ],
+)
+def test_a_supported_sql_aggregate_is_translated_to_dax(sql, dax):
+    assert _metric_dax(sql) == dax
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SUM(c) / COUNT(*)",  # arithmetic between aggregates
+        "SUM(c + c)",  # aggregate over an expression
+        "SUM(t.c)",  # qualified reference implies an unmodelled join
+        "SUM(DISTINCT c)",  # no DAX equivalent
+        "COUNT(DISTINCT c, c)",  # multi-column DISTINCT
+        "PERCENTILE_CONT(c, 0.5)",  # DAX spells this differently per interpolation
+        "SUM(c) FILTER (WHERE c > 1)",
+        "COUNT(c) OVER ()",
+        "SUM(nonexistent)",  # does not resolve to a modelled column
+        "CASE WHEN c THEN 1 END",
+        "c",  # not an aggregate at all
+    ],
+)
+def test_an_unsupported_sql_expression_is_never_guessed(sql):
+    """Anything outside the curated set must be skipped, never approximated."""
+    assert _metric_dax(sql) is None
+
+
+def test_a_column_in_two_datasets_is_too_ambiguous_to_translate():
+    semantic_model = _minimal(
+        metrics=[{"name": "M", "expression": make_expression("SUM(c)", "ANSI_SQL")}]
+    )
+    # A second dataset exposing the same column name: DAX must name one table, and
+    # guessing which was meant is exactly what this converter refuses to do.
+    semantic_model["datasets"].append(
+        {
+            "name": "T2",
+            "source": "dbo.t2",
+            "fields": [
+                {
+                    "name": "C",
+                    "datatype": "String",
+                    "expression": make_expression("c", "ANSI_SQL"),
+                }
+            ],
+        }
+    )
+    with pytest.warns(UserWarning, match="does not resolve to exactly one"):
+        bim = _convert(semantic_model)
+    assert all("measures" not in table for table in bim["model"]["tables"])
+
+
+def test_a_non_sql_dialect_is_not_parsed_as_sql():
+    assert _metric_dax("SUM([Measures].[x])", "MDX") is None
 
 
 def test_a_metric_without_a_home_table_lands_on_the_first_table():
