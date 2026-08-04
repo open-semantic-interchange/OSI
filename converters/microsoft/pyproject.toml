@@ -49,7 +49,6 @@ keywords = [
     "Power BI",
     "Fabric",
     "TMSL",
-    "TMDL",
 ]
 dependencies = [
     "PyYAML>=6.0",
