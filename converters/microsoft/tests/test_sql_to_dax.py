@@ -29,6 +29,12 @@ from ossie_microsoft._sql_to_dax import quote_column, quote_table, translate
 COLUMNS = {
     "amount": ("Sales", "Amount"),
     "cust": ("Sales", "Customer Id"),
+    "customer_name": ("TableName", "customer_name"),
+    "customer_last_name": ("TableName", "customer_last_name"),
+    "store_sales.ss_ext_sales_price": ("store_sales", "ss_ext_sales_price"),
+    "store_sales.ss_net_profit": ("store_sales", "ss_net_profit"),
+    "customer.c_customer_sk": ("customer", "c_customer_sk"),
+    "store.s_number_employees": ("store", "s_number_employees"),
 }
 
 
@@ -65,10 +71,48 @@ def test_a_curated_aggregate_is_translated(sql, dax):
     assert _translate(sql) == (dax, None)
 
 
+def test_columns_and_literals_are_concatenated_with_table_qualified_dax():
+    assert _translate("customer_name || ' ' || customer_last_name") == (
+        "'TableName'[customer_name] & \" \" & 'TableName'[customer_last_name]",
+        None,
+    )
+
+
+def test_a_dax_string_literal_escapes_double_quotes():
+    assert _translate("customer_name || '\"' || customer_last_name") == (
+        "'TableName'[customer_name] & \"\"\"\" & 'TableName'[customer_last_name]",
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("sql", "dax"),
+    [
+        (
+            "SUM(store_sales.ss_ext_sales_price)",
+            "SUM('store_sales'[ss_ext_sales_price])",
+        ),
+        (
+            "SUM(store_sales.ss_ext_sales_price) / "
+            "COUNT(DISTINCT customer.c_customer_sk)",
+            "DIVIDE(SUM('store_sales'[ss_ext_sales_price]), "
+            "DISTINCTCOUNTNOBLANK('customer'[c_customer_sk]))",
+        ),
+        (
+            "SUM(store_sales.ss_ext_sales_price) / "
+            "NULLIF(SUM(store.s_number_employees), 0)",
+            "DIVIDE(SUM('store_sales'[ss_ext_sales_price]), "
+            "SUM('store'[s_number_employees]))",
+        ),
+    ],
+)
+def test_tpcds_metric_shapes_are_translated(sql, dax):
+    assert _translate(sql) == (dax, None)
+
+
 @pytest.mark.parametrize(
     "sql",
     [
-        "SUM(amount) / COUNT(*)",
         "SUM(amount) + 0",
         "SUM(amount + amount)",
         "SUM(CASE WHEN amount THEN amount END)",

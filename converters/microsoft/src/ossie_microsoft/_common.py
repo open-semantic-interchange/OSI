@@ -42,6 +42,7 @@ import warnings
 # handler an embedding application configured, without that application having to
 # install a warning filter.
 LOGGER = logging.getLogger("ossie_microsoft")
+_WARNING_REGISTRY = {}
 
 # Apache Ossie semantic model spec version this converter targets (see core-spec).
 #
@@ -209,9 +210,16 @@ def warn(scope, msg):
     """
     message = f"[{scope}] {msg}"
     LOGGER.warning(message)
-    # stacklevel=2 points the warning at the conversion call site rather than at this
-    # helper, so `-W error` tracebacks name the code that triggered the loss.
-    warnings.warn(message, stacklevel=2)
+    # A synthetic location keeps notebook warning renderers from appending the
+    # converter's internal multi-line `warn(` call as source context.
+    warnings.warn_explicit(
+        message,
+        UserWarning,
+        filename="ossie_microsoft",
+        lineno=1,
+        module="ossie_microsoft",
+        registry=_WARNING_REGISTRY,
+    )
 
 
 def warn_unsupported(scope, present, catalogue, counterpart, fate):

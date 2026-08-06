@@ -23,6 +23,7 @@ in the least helpful way at the least helpful moment.
 """
 
 import json
+import warnings
 
 import pytest
 
@@ -34,6 +35,7 @@ from ossie_microsoft._common import (
     ConversionError,
     make_expression,
     read_stash,
+    warn,
     write_stash,
 )
 from ossie_microsoft.semantic_model_to_ossie import build_ossie_document
@@ -62,6 +64,17 @@ def _model(**overrides):
 
 def _convert(document):
     return convert_ossie_to_semantic_model(document)
+
+
+def test_warning_rendering_does_not_reference_an_internal_warn_call(monkeypatch):
+    shown = []
+    monkeypatch.setattr(warnings, "showwarning", lambda *args, **kwargs: shown.append(args))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("always")
+        warn("model", "something changed")
+
+    assert shown[0][2:4] == ("ossie_microsoft", 1)
 
 
 # ---------------------------------------------------------------------------

@@ -15,11 +15,12 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""A deliberately narrow SQL-to-DAX translator for Apache Ossie metric expressions.
+"""A deliberately narrow SQL-to-DAX translator for Apache Ossie expressions.
 
-Apache Ossie metrics carry a SQL expression; Power BI evaluates measures only as DAX.
-Rather than attempt a general translation, this module recognises a closed set of
-shapes whose DAX equivalent is unambiguous, and refuses everything else.
+Apache Ossie fields and metrics can carry SQL expressions; Power BI evaluates
+calculated columns and measures only as DAX. Rather than attempt a general translation,
+this module recognises a closed set of shapes whose DAX equivalent is unambiguous, and
+refuses everything else.
 
 The governing rule is the one stated in `_common`: never emit a plausible-looking
 expression that was not authored for the target engine. A metric this module declines
@@ -28,18 +29,22 @@ deploy cleanly and quietly return a wrong number.
 
 What is translated
 ------------------
-A single aggregate call over one unqualified column, and `COUNT(*)`. Concretely::
+A single aggregate call over one column, `COUNT(*)`, division between supported
+aggregates, division by ``NULLIF(aggregate, 0)``, and string concatenations made only
+from columns and string literals. Concretely::
 
     SUM(amount)            ->  SUM('Sales'[Amount])
     COUNT(DISTINCT cust)   ->  DISTINCTCOUNTNOBLANK('Sales'[Customer])
     COUNT(*)               ->  COUNTROWS('Sales')
+    SUM(s.sales) / COUNT(*) -> DIVIDE(SUM('s'[sales]), COUNTROWS('s'))
+    first || ' ' || last   ->  'Customer'[First] & " " & 'Customer'[Last]
 
 What is refused
 ---------------
-Everything else, including arithmetic between aggregates (`SUM(a) / COUNT(*)`),
-aggregates over expressions (`SUM(a + b)`), `CASE`, `DISTINCT` outside `COUNT`,
-`FILTER`/`OVER` clauses, and any column that cannot be resolved to exactly one
-dataset. Ambiguity is treated as failure, never as a guess.
+Everything else, including non-division arithmetic, aggregates over expressions
+(`SUM(a + b)`), `CASE`, `DISTINCT` outside `COUNT`, `FILTER`/`OVER` clauses, and any
+column that cannot be resolved to exactly one dataset. Ambiguity is treated as failure,
+never as a guess.
 
 Why the column must resolve
 ---------------------------
@@ -122,44 +127,71 @@ def quote_column(name):
     return f"[{escaped}]"
 
 
-def translate(expression, dialect, resolve_column, resolve_table):
-    """Translate a SQL aggregate to DAX, or return ``(None, reason)``.
+def quote_string(value):
+    """Quote a DAX string literal. Double quotes are escaped by doubling."""
+    escaped = value.replace('"', '""')
+    return f'"{escaped}"'
 
-    ``resolve_column`` takes a SQL identifier and returns ``(table, column)`` naming
-    the Power BI table and column, or ``None`` when the name is unknown or ambiguous.
-    ``resolve_table`` returns the sole table name for a ``COUNT(*)``, or ``None``.
 
-    Returns ``(dax, None)`` on success and ``(None, reason)`` otherwise, where
-    ``reason`` explains the refusal in terms a modeller can act on.
-    """
+def _parse(expression, dialect):
     if dialect not in READABLE_DIALECTS:
         return None, f"'{dialect}' is not a SQL dialect this converter can parse"
 
     try:
-        tree = sqlglot.parse_one(expression, read=READABLE_DIALECTS[dialect])
+        tree = sqlglot.parse_one(sql=expression, read=READABLE_DIALECTS[dialect])
     except Exception:
         return None, "the expression could not be parsed as SQL"
 
-    # `parse_one` wraps an aliased expression, e.g. `SUM(x) AS total`.
-    if isinstance(tree, exp.Alias):
-        tree = tree.this
+    return tree.this if isinstance(tree, exp.Alias) else tree, None
 
+
+def _resolve_column(column, resolve_column):
+    if column.args.get("db") or column.args.get("catalog"):
+        return None
+    key = f"{column.table}.{column.name}" if column.table else column.name
+    return resolve_column(key)
+
+
+def _translate_concatenation(tree, resolve_column):
+    if isinstance(tree, exp.DPipe):
+        left, reason = _translate_concatenation(tree.this, resolve_column)
+        if left is None:
+            return None, reason
+        right, reason = _translate_concatenation(tree.expression, resolve_column)
+        if right is None:
+            return None, reason
+        return f"{left} & {right}", None
+
+    if isinstance(tree, exp.Literal) and tree.is_string:
+        return quote_string(tree.this), None
+
+    if not isinstance(tree, exp.Column):
+        return None, "a concatenation may contain only columns and string literals"
+    resolved = _resolve_column(tree, resolve_column)
+    if resolved is None:
+        return None, f"column '{tree.sql()}' does not resolve to exactly one dataset field"
+    table, column = resolved
+    return f"{quote_table(table)}{quote_column(column)}", None
+
+
+def translate_concatenation(expression, dialect, resolve_column):
+    """Translate a SQL string concatenation for a calculated column."""
+    tree, reason = _parse(expression, dialect)
+    if tree is None:
+        return None, reason
+    if not isinstance(tree, exp.DPipe):
+        return None, "only string concatenation is translated for a calculated column"
+    return _translate_concatenation(tree, resolve_column)
+
+
+def _translate_aggregate(tree, resolve_column, resolve_table):
     dax_function = _AGGREGATES.get(type(tree))
     if dax_function is None:
-        return None, (
-            "only a single aggregate over one column translates unambiguously to DAX"
-        )
+        return None, "only supported aggregate expressions can be used in a metric"
 
-    # Snowflake and Databricks accept a multi-argument `COUNT(a, b)`, which counts rows
-    # where every argument is non-NULL. sqlglot puts the first argument in `this` and
-    # the rest in `expressions`, so reading only `this` would quietly drop the others
-    # and overcount. Every DAX aggregate here takes exactly one column, so refuse.
     if tree.args.get("expressions"):
         return None, "an aggregate over multiple arguments has no DAX equivalent"
 
-    # `OVER` and `FILTER (WHERE ...)` parse as wrapper nodes (`exp.Window`,
-    # `exp.Filter`) rather than as arguments, so they are already refused above by not
-    # being aggregates. `ORDER BY` inside an aggregate is refused the same way.
     argument = tree.this
     distinct = False
     if isinstance(argument, exp.Distinct):
@@ -179,20 +211,61 @@ def translate(expression, dialect, resolve_column, resolve_table):
             return f"COUNTROWS({quote_table(table)})", None
         dax_function = "DISTINCTCOUNTNOBLANK" if distinct else "COUNTA"
     elif distinct:
-        # `SUM(DISTINCT x)` deduplicates before aggregating; DAX has no such form.
         return None, f"'DISTINCT' inside '{dax_function}' has no DAX equivalent"
 
     if not isinstance(argument, exp.Column):
         return None, "only an aggregate over a single column reference is translated"
-    if argument.args.get("table") or argument.args.get("db"):
-        # A qualified reference implies a join or alias the Ossie document does not
-        # describe, so the intended Power BI table cannot be established.
-        return None, "a qualified column reference is not translated"
 
-    resolved = resolve_column(argument.name)
+    resolved = _resolve_column(argument, resolve_column)
     if resolved is None:
-        return None, (
-            f"column '{argument.name}' does not resolve to exactly one dataset field"
-        )
+        return None, f"column '{argument.sql()}' does not resolve to exactly one dataset field"
     table, column = resolved
     return f"{dax_function}({quote_table(table)}{quote_column(column)})", None
+
+
+def _translate_division(tree, resolve_column, resolve_table):
+    denominator = tree.expression
+    if isinstance(denominator, exp.Nullif):
+        zero = denominator.expression
+        if not isinstance(zero, exp.Literal) or zero.is_string or zero.this != "0":
+            return None, "only NULLIF(aggregate, 0) is translated in a denominator"
+        denominator = denominator.this
+
+    numerator_dax, reason = _translate_aggregate(
+        tree.this, resolve_column, resolve_table
+    )
+    if numerator_dax is None:
+        return None, reason
+    denominator_dax, reason = _translate_aggregate(
+        denominator, resolve_column, resolve_table
+    )
+    if denominator_dax is None:
+        return None, reason
+    return f"DIVIDE({numerator_dax}, {denominator_dax})", None
+
+
+def translate(expression, dialect, resolve_column, resolve_table):
+    """Translate a supported SQL expression to DAX, or return ``(None, reason)``.
+
+    ``resolve_column`` takes a SQL identifier and returns ``(table, column)`` naming
+    the Power BI table and column, or ``None`` when the name is unknown or ambiguous.
+    ``resolve_table`` returns the sole table name for a ``COUNT(*)``, or ``None``.
+
+    Returns ``(dax, None)`` on success and ``(None, reason)`` otherwise, where
+    ``reason`` explains the refusal in terms a modeller can act on.
+    """
+    tree, reason = _parse(expression, dialect)
+    if tree is None:
+        return None, reason
+
+    if isinstance(tree, exp.DPipe):
+        return _translate_concatenation(tree, resolve_column)
+
+    if isinstance(tree, exp.Div):
+        return _translate_division(tree, resolve_column, resolve_table)
+
+    if type(tree) not in _AGGREGATES:
+        return None, (
+            "only a single aggregate over one column translates unambiguously to DAX"
+        )
+    return _translate_aggregate(tree, resolve_column, resolve_table)

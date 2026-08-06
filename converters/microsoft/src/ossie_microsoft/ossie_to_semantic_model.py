@@ -229,12 +229,13 @@ def _convert_dataset(dataset):
 
     key_columns = _key_columns(dataset, scope)
     unique_columns = _unique_columns(dataset, scope)
+    column_index = _dataset_column_index(dataset)
 
     columns = []
     for field in dataset.get("fields") or []:
         if not isinstance(field, dict) or not field.get("name"):
             continue
-        column = _convert_field(field, scope)
+        column = _convert_field(field, scope, column_index.get)
         if column is None:
             continue
         if column["name"] in key_columns:
@@ -432,7 +433,7 @@ def _unique_columns(dataset, scope):
 # ---------------------------------------------------------------------------
 
 
-def _convert_field(field, dataset_scope):
+def _convert_field(field, dataset_scope, resolve_column):
     name = field["name"]
     scope = f"{dataset_scope} field '{name}'"
     stash = read_stash(field)
@@ -448,13 +449,17 @@ def _convert_field(field, dataset_scope):
     else:
         dialect, expression = _preferred_expression(expressions)
         if dialect != DIALECT_DAX:
-            # A metric's SQL aggregate is translated (see `_sql_to_dax`), but a
-            # calculated column is not: it evaluates in row context, where `SUM(T[c])`
-            # returns the whole-column total on every row rather than the row's value.
-            # A translation that is right for a measure is wrong here.
-            _untranslatable(scope, "calculated column", dialect)
             column["type"] = "calculated"
-            column["expression"] = "BLANK()"
+            dax, reason = sql_to_dax.translate_concatenation(
+                expression,
+                dialect,
+                lambda column_name: resolve_column(column_name.casefold()),
+            )
+            if dax is None:
+                _untranslatable(scope, "calculated column", dialect, reason)
+                column["expression"] = "BLANK()"
+            else:
+                column["expression"] = dax
             _apply_expression_annotations(column, dialect, expression)
         else:
             column["type"] = "calculated"
@@ -478,6 +483,25 @@ def _convert_field(field, dataset_scope):
             column.setdefault(key, value)
     _apply_ai_context(column, field.get("ai_context"))
     return column
+
+
+def _dataset_column_index(dataset):
+    """Map each SQL-visible field name to its unique model column in this dataset."""
+    seen = {}
+    table = dataset["name"]
+    for field in dataset.get("fields") or []:
+        if not isinstance(field, dict) or not field.get("name"):
+            continue
+        aliases = {field["name"]}
+        expressions = dialect_expressions(field.get("expression"))
+        if expressions:
+            _, expression = _preferred_expression(expressions)
+            candidate = expression.strip('"').strip("`").strip("[]")
+            if IDENTIFIER_RE.match(candidate):
+                aliases.add(candidate)
+        for alias in aliases:
+            seen.setdefault(alias.casefold(), set()).add((table, field["name"]))
+    return {key: next(iter(matches)) for key, matches in seen.items() if len(matches) == 1}
 
 
 def _column_datatype(field, stash, scope):
@@ -544,7 +568,7 @@ def _map_datatype(datatype, scope):
 
 
 def _column_index(tables):
-    """Map each SQL-visible column name to its unique Power BI ``(table, column)``.
+    """Map SQL-visible column references to Power BI ``(table, column)`` pairs.
 
     A name that occurs in more than one table is deliberately dropped: DAX must name
     the table, and guessing which one a metric meant would be exactly the kind of
@@ -559,6 +583,8 @@ def _column_index(tables):
             for key in {column.get("sourceColumn"), column["name"]}:
                 if key:
                     seen.setdefault(key.casefold(), set()).add(target)
+                    qualified = f"{table['name']}.{key}".casefold()
+                    seen.setdefault(qualified, set()).add(target)
     return {key: next(iter(hits)) for key, hits in seen.items() if len(hits) == 1}
 
 
@@ -592,13 +618,11 @@ def _apply_measures(tables, metrics):
             warn(scope, "metric has no expression; skipped")
             continue
         dialect, expression = _preferred_expression(expressions)
-        untranslated = False
         if dialect == DIALECT_DAX:
             dax = _tmsl_text(expression)
         else:
             dax = _translate_metric_expression(expression, dialect, tables, scope)
             if dax is None:
-                untranslated = True
                 dax = "BLANK()"
 
         table = by_name.get(stash.get("table"))
@@ -629,7 +653,7 @@ def _apply_measures(tables, metrics):
         for key, value in stash.items():
             if key not in _MEASURE_CONTROL_KEYS:
                 measure.setdefault(key, value)
-        if untranslated:
+        if dialect != DIALECT_DAX:
             _apply_expression_annotations(measure, dialect, expression)
         _apply_ai_context(measure, metric.get("ai_context"))
         table.setdefault("measures", []).append(measure)

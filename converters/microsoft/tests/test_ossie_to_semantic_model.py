@@ -176,6 +176,38 @@ def test_a_computed_sql_expression_uses_blank_and_annotations():
     assert _annotation(column, "OssieExpression") == "SUM(amount) / COUNT(*)"
 
 
+def test_a_sql_concatenation_becomes_a_table_qualified_calculated_column():
+    semantic_model = _minimal()
+    semantic_model["datasets"][0]["fields"] = [
+        {
+            "name": "FirstName",
+            "datatype": "String",
+            "expression": make_expression("customer_name", "ANSI_SQL"),
+        },
+        {
+            "name": "LastName",
+            "datatype": "String",
+            "expression": make_expression("customer_last_name", "ANSI_SQL"),
+        },
+        {
+            "name": "FullName",
+            "datatype": "String",
+            "expression": make_expression(
+                "customer_name || ' ' || customer_last_name", "ANSI_SQL"
+            ),
+        },
+    ]
+
+    column = _column(_table(_convert(semantic_model), "T"), "FullName")
+    assert column["type"] == "calculated"
+    assert column["expression"] == "'T'[FirstName] & \" \" & 'T'[LastName]"
+    assert _annotation(column, "OssieExpressionDialect") == "ANSI_SQL"
+    assert (
+        _annotation(column, "OssieExpression")
+        == "customer_name || ' ' || customer_last_name"
+    )
+
+
 def test_a_date_field_carries_a_date_only_format_string():
     semantic_model = _minimal()
     semantic_model["datasets"][0]["fields"][0]["datatype"] = "Date"
@@ -360,6 +392,8 @@ def _metric_dax(sql, dialect="ANSI_SQL"):
         ("MEDIAN(c)", "MEDIAN('T'[C])"),
         ("COUNT(DISTINCT c)", "DISTINCTCOUNTNOBLANK('T'[C])"),
         ("COUNT(*)", "COUNTROWS('T')"),
+        ("SUM(c) / COUNT(*)", "DIVIDE(SUM('T'[C]), COUNTROWS('T'))"),
+        ("SUM(t.c)", "SUM('T'[C])"),
         # The field is named `C` but its source column is `c`; DAX must use the
         # model name, not the physical one.
         ("sum(C)", "SUM('T'[C])"),
@@ -369,12 +403,58 @@ def test_a_supported_sql_aggregate_is_translated_to_dax(sql, dax):
     assert _metric_dax(sql) == dax
 
 
+def test_all_tpcds_example_metrics_translate_to_dax():
+    repo_root = Path(__file__).resolve().parents[3]
+    ossie = (repo_root / "examples" / "tpcds_semantic_model.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        bim = convert_ossie_to_semantic_model(ossie)
+
+    measures = {
+        measure["name"]: measure
+        for table in bim["model"]["tables"]
+        for measure in table.get("measures") or []
+    }
+    assert measures["total_sales"]["expression"] == (
+        "SUM('store_sales'[ss_ext_sales_price])"
+    )
+    assert measures["total_profit"]["expression"] == (
+        "SUM('store_sales'[ss_net_profit])"
+    )
+    assert measures["customer_lifetime_value"]["expression"] == (
+        "DIVIDE(SUM('store_sales'[ss_ext_sales_price]), "
+        "DISTINCTCOUNTNOBLANK('customer'[c_customer_sk]))"
+    )
+    assert measures["sales_by_brand"]["expression"] == (
+        "SUM('store_sales'[ss_ext_sales_price])"
+    )
+    assert measures["store_productivity"]["expression"] == (
+        "DIVIDE(SUM('store_sales'[ss_ext_sales_price]), "
+        "SUM('store'[s_number_employees]))"
+    )
+    assert all(measure["expression"] != "BLANK()" for measure in measures.values())
+
+
+def test_a_translated_sql_measure_preserves_its_source_expression():
+    semantic_model = _minimal(
+        metrics=[{"name": "M", "expression": make_expression("SUM(c)", "ANSI_SQL")}]
+    )
+
+    with pytest.warns(UserWarning, match="no home table recorded"):
+        bim = _convert(semantic_model)
+    measure = _table(bim, "T")["measures"][0]
+    assert measure["expression"] == "SUM('T'[C])"
+    assert _annotation(measure, "OssieExpressionDialect") == "ANSI_SQL"
+    assert _annotation(measure, "OssieExpression") == "SUM(c)"
+
+
 @pytest.mark.parametrize(
     "sql",
     [
-        "SUM(c) / COUNT(*)",  # arithmetic between aggregates
         "SUM(c + c)",  # aggregate over an expression
-        "SUM(t.c)",  # qualified reference implies an unmodelled join
         "SUM(DISTINCT c)",  # no DAX equivalent
         "COUNT(DISTINCT c, c)",  # multi-column DISTINCT
         "PERCENTILE_CONT(c, 0.5)",  # DAX spells this differently per interpolation
