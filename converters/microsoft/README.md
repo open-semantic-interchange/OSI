@@ -54,7 +54,10 @@ result.raise_for_errors()
 ```
 
 Set `OSSIE_MICROSOFT_TOM_ASSEMBLIES` when the assemblies live somewhere other than
-`.tom/assemblies`. This validation checks TMSL structure and object references. **Offline
+`.tom/assemblies`. The assemblies target `net8.0` and are platform-neutral for offline
+validation, so this works on Linux, macOS and Windows; the only native payload in the
+package is the MSAL authentication broker, which offline validation never loads. This
+validation checks TMSL structure and object references. **Offline
 TOM does not parse or validate DAX**, including syntax, function names, arity, or column
 references, so use a separate DAX parser when that guarantee is required.
 
