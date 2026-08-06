@@ -110,7 +110,7 @@ def test_only_the_first_model_is_converted():
 
 def test_the_model_header_is_restored_from_the_stash(bim_out):
     assert bim_out["name"] == "sales_model"
-    assert bim_out["compatibilityLevel"] == 1550
+    assert bim_out["compatibilityLevel"] == 1702
     assert bim_out["model"]["culture"] == "en-US"
     assert bim_out["model"]["description"] == "Retail sales semantic model"
 

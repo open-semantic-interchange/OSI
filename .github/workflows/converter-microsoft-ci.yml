@@ -80,3 +80,35 @@ jobs:
         working-directory: converters/microsoft
         run: |
           uv run --script ../../validation/validate.py rt.yaml
+
+  tom-structural-validation:
+    name: Optional TOM structural validation
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Install uv
+        run: python -m pip install uv
+
+      - name: Install optional TOM dependencies
+        working-directory: converters/microsoft
+        run: |
+          uv sync --extra tom
+          uv run python scripts/restore_tom.py
+
+      - name: Run TOM structural validation tests
+        working-directory: converters/microsoft
+        run: |
+          uv run pytest tests/test_tom_integration.py -v

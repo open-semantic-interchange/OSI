@@ -25,6 +25,7 @@
 **/htmlcov/
 **/dist/
 **/target/
+**/.tom/
 *.py[cod]
 
 # Go CLI

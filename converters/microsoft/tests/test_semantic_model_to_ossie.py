@@ -57,9 +57,15 @@ def test_public_module_exports_the_converters():
 
     assert ossie_microsoft.__all__ == [
         "ConversionError",
+        "TomUnavailableError",
+        "TomValidationError",
+        "TomValidationIssue",
+        "TomValidationResult",
         "build_ossie_document",
         "convert_ossie_to_semantic_model",
         "convert_semantic_model_to_ossie",
+        "validate_bim",
+        "validate_tmsl",
     ]
     assert callable(ossie_microsoft.convert_semantic_model_to_ossie)
     assert callable(ossie_microsoft.convert_ossie_to_semantic_model)
@@ -269,7 +275,7 @@ def test_dax_is_a_spec_dialect():
 
 def test_model_stash_preserves_excluded_tables_and_relationships(model):
     stash = read_stash(model)
-    assert stash["document"]["compatibilityLevel"] == 1550
+    assert stash["document"]["compatibilityLevel"] == 1702
     assert stash["culture"] == "en-US"
     excluded = {t["name"] for t in stash["excludedTables"]}
     assert excluded == {"LocalDateTable_9f2a1b3c", "Internal Staging", "Time Intelligence"}

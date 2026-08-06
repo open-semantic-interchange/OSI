@@ -55,6 +55,12 @@ dependencies = [
     "sqlglot>=30.12.0",
 ]
 
+[project.optional-dependencies]
+tom = [
+    "clr-loader==0.3.1",
+    "pythonnet==3.1.0",
+]
+
 [project.scripts]
 ossie-microsoft = "ossie_microsoft.cli:main"
 

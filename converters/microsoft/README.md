@@ -31,6 +31,33 @@ cd converters/microsoft
 uv sync
 ```
 
+### Optional TOM structural validation
+
+Microsoft's Tabular Object Model (TOM) can load and structurally validate exported
+`model.bim` files entirely offline. It is deliberately optional: TOM is proprietary
+Microsoft-licensed software, while conversion itself remains independent of .NET and
+depends only on the normal Python dependencies.
+
+```bash
+uv sync --extra tom
+uv run python scripts/restore_tom.py
+```
+
+The restore script pins `Microsoft.AnalysisServices` from NuGet and writes its assemblies
+under the ignored `.tom/` directory; no DLLs are committed. Then validate from Python:
+
+```python
+from ossie_microsoft import validate_bim
+
+result = validate_bim("model.bim")
+result.raise_for_errors()
+```
+
+Set `OSSIE_MICROSOFT_TOM_ASSEMBLIES` when the assemblies live somewhere other than
+`.tom/assemblies`. This validation checks TMSL structure and object references. **Offline
+TOM does not parse or validate DAX**, including syntax, function names, arity, or column
+references, so use a separate DAX parser when that guarantee is required.
+
 ## Usage
 
 ### Command line

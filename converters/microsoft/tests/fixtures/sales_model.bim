@@ -1,6 +1,6 @@
 {
   "name": "sales_model",
-  "compatibilityLevel": 1550,
+  "compatibilityLevel": 1702,
   "model": {
     "description": "Retail sales semantic model",
     "culture": "en-US",
@@ -193,6 +193,53 @@
             "name": "Date",
             "dataType": "dateTime",
             "sourceColumn": "Date"
+          },
+          {
+            "name": "Year",
+            "type": "calculated",
+            "dataType": "int64",
+            "expression": "YEAR([Date])"
+          },
+          {
+            "name": "Quarter",
+            "type": "calculated",
+            "dataType": "string",
+            "expression": "\"Q\" & FORMAT([Date], \"Q\")"
+          },
+          {
+            "name": "Month",
+            "type": "calculated",
+            "dataType": "string",
+            "expression": "FORMAT([Date], \"MMMM\")"
+          },
+          {
+            "name": "Day",
+            "type": "calculated",
+            "dataType": "int64",
+            "expression": "DAY([Date])"
+          }
+        ],
+        "hierarchies": [
+          {
+            "name": "Date Hierarchy",
+            "levels": [
+              {
+                "name": "Year",
+                "column": "Year"
+              },
+              {
+                "name": "Quarter",
+                "column": "Quarter"
+              },
+              {
+                "name": "Month",
+                "column": "Month"
+              },
+              {
+                "name": "Day",
+                "column": "Day"
+              }
+            ]
           }
         ]
       },
