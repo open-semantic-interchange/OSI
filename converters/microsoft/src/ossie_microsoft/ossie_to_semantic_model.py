@@ -23,13 +23,9 @@ become TMSL relationships. When the document was produced by
 ``custom_extensions`` blob is replayed so the original Power BI model is restored rather
 than approximated.
 
-Expressions are never rewritten between languages. Power BI evaluates DAX; an Apache
-Ossie expression written in ``ANSI_SQL`` (or any other dialect) is only usable when it is
-a plain column reference, which maps to a TMSL ``sourceColumn``. Anything else is
-reported through :func:`_common.warn` and skipped, because emitting a
-mechanically rewritten expression that was never authored for the DAX engine would
-produce a model that looks correct and computes the wrong answer. Expressions for fields and metrics
-are stored as annotations on the semantic model object (i.e. measure/column).
+Power BI evaluates DAX. An expression that cannot be translated is emitted as
+``BLANK()`` so its calculated column or measure remains in the model, while its original
+dialect and expression are stored as annotations on that object.
 
 The ``ai_context`` values are saved as annotations on the semantic model object. Relationships which
 depend on multiple columns are not supported in Power BI and are skipped. The ``primary_key`` and
@@ -76,24 +72,19 @@ _MEASURE_CONTROL_KEYS = frozenset({"table", "name"})
 _COLUMN_CONTROL_KEYS = frozenset({"dataType", "sourceColumn"})
 
 AI_CONTEXT_ANNOTATION = "OssieAIContext"
+EXPRESSION_DIALECT_ANNOTATION = "OssieExpressionDialect"
+EXPRESSION_ANNOTATION = "OssieExpression"
 
 
 def _untranslatable(scope, kind, dialect, reason=None):
-    """Report an expression this converter cannot translate into DAX, and skip it.
-
-    Power BI has no way to hold a non-DAX expression: whatever lands in `expression`
-    is evaluated as DAX. Emitting a stand-in such as `BLANK()` would produce a model
-    that loads cleanly and answers every query with the wrong number, which is far
-    worse than an absent object a modeller can see is missing. So the object is left
-    out and the original expression is preserved verbatim in the Apache Ossie source.
-    """
+    """Report an expression this converter cannot translate into DAX."""
     detail = f" ({reason})" if reason else ""
     warn(
         scope,
         f"a '{dialect}' expression could not be translated to DAX{detail}, and Power BI "
-        f"evaluates a measure or calculated column only as DAX; the {kind} is "
-        f"skipped rather than given a stand-in expression that would silently "
-        f"return a wrong result. Supply a '{DIALECT_DAX}' expression to convert it.",
+        f"evaluates a measure or calculated column only as DAX; the {kind} uses "
+        f"BLANK() and preserves the original dialect and expression as annotations. "
+        f"Supply a '{DIALECT_DAX}' expression to convert it.",
     )
 
 # Apache Ossie temporal types that Power BI cannot represent faithfully. Power BI stores
@@ -462,9 +453,12 @@ def _convert_field(field, dataset_scope):
             # returns the whole-column total on every row rather than the row's value.
             # A translation that is right for a measure is wrong here.
             _untranslatable(scope, "calculated column", dialect)
-            return None
-        column["type"] = "calculated"
-        column["expression"] = _tmsl_text(expression)
+            column["type"] = "calculated"
+            column["expression"] = "BLANK()"
+            _apply_expression_annotations(column, dialect, expression)
+        else:
+            column["type"] = "calculated"
+            column["expression"] = _tmsl_text(expression)
 
     datatype = _column_datatype(field, stash, scope)
     if datatype:
@@ -598,12 +592,14 @@ def _apply_measures(tables, metrics):
             warn(scope, "metric has no expression; skipped")
             continue
         dialect, expression = _preferred_expression(expressions)
+        untranslated = False
         if dialect == DIALECT_DAX:
             dax = _tmsl_text(expression)
         else:
             dax = _translate_metric_expression(expression, dialect, tables, scope)
             if dax is None:
-                continue
+                untranslated = True
+                dax = "BLANK()"
 
         table = by_name.get(stash.get("table"))
         if table is None:
@@ -633,6 +629,8 @@ def _apply_measures(tables, metrics):
         for key, value in stash.items():
             if key not in _MEASURE_CONTROL_KEYS:
                 measure.setdefault(key, value)
+        if untranslated:
+            _apply_expression_annotations(measure, dialect, expression)
         _apply_ai_context(measure, metric.get("ai_context"))
         table.setdefault("measures", []).append(measure)
 
@@ -718,6 +716,11 @@ def _apply_ai_context(target, ai_context):
         else json.dumps(ai_context, ensure_ascii=False, sort_keys=True)
     )
     _set_annotation(target, AI_CONTEXT_ANNOTATION, value)
+
+
+def _apply_expression_annotations(target, dialect, expression):
+    _set_annotation(target, EXPRESSION_DIALECT_ANNOTATION, dialect)
+    _set_annotation(target, EXPRESSION_ANNOTATION, expression)
 
 
 def _set_annotation(target, name, value):

@@ -25,8 +25,9 @@ Design rule for this converter pair: **never emit a plausible-looking expression
 was not authored for the target engine**. Power BI measures are DAX; Apache Ossie field
 expressions are usually SQL. The two are not interchangeable, and a partial SQL-to-DAX
 rewrite that silently produces invalid or subtly wrong DAX is worse than a refusal.
-Where an expression cannot be carried across faithfully, the converter warns and skips
-rather than guessing.
+Where an expression cannot be carried across faithfully, the converter warns and uses
+an explicit placeholder rather than guessing, preserving the source expression as
+metadata when the target format supports it.
 """
 
 import json

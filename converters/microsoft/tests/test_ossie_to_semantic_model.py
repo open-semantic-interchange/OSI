@@ -162,16 +162,18 @@ def test_a_dax_expression_becomes_a_calculated_column(bim_out):
     assert "annotations" not in column
 
 
-def test_a_computed_sql_expression_is_reported_and_skipped():
+def test_a_computed_sql_expression_uses_blank_and_annotations():
     semantic_model = _minimal()
     semantic_model["datasets"][0]["fields"][0]["expression"] = make_expression(
         "SUM(amount) / COUNT(*)", "ANSI_SQL"
     )
     with pytest.warns(UserWarning, match="could not be translated to DAX"):
         table = _table(_convert(semantic_model), "T")
-    # No stand-in expression: a `BLANK()` column would load cleanly and then answer
-    # every query with a wrong number, which is worse than an absent column.
-    assert not any(column["name"] == "C" for column in table.get("columns", []))
+    column = _column(table, "C")
+    assert column["type"] == "calculated"
+    assert column["expression"] == "BLANK()"
+    assert _annotation(column, "OssieExpressionDialect") == "ANSI_SQL"
+    assert _annotation(column, "OssieExpression") == "SUM(amount) / COUNT(*)"
 
 
 def test_a_date_field_carries_a_date_only_format_string():
@@ -313,7 +315,7 @@ def test_a_metric_returns_to_its_home_table(bim_out):
     assert "annotations" not in measures["Total Sales"]
 
 
-def test_a_metric_with_an_untranslatable_expression_is_reported_and_skipped():
+def test_a_metric_with_an_untranslatable_expression_uses_blank_and_annotations():
     semantic_model = _minimal(
         metrics=[
             {
@@ -324,8 +326,10 @@ def test_a_metric_with_an_untranslatable_expression_is_reported_and_skipped():
     )
     with pytest.warns(UserWarning, match="could not be translated to DAX"):
         bim = _convert(semantic_model)
-    # Skipped before a home table is even chosen, so no measure is emitted at all.
-    assert "measures" not in _table(bim, "T")
+    measure = _table(bim, "T")["measures"][0]
+    assert measure["expression"] == "BLANK()"
+    assert _annotation(measure, "OssieExpressionDialect") == "ANSI_SQL"
+    assert _annotation(measure, "OssieExpression") == "SUM(amount) / COUNT(*)"
 
 
 def _metric_dax(sql, dialect="ANSI_SQL"):
@@ -382,8 +386,8 @@ def test_a_supported_sql_aggregate_is_translated_to_dax(sql, dax):
     ],
 )
 def test_an_unsupported_sql_expression_is_never_guessed(sql):
-    """Anything outside the curated set must be skipped, never approximated."""
-    assert _metric_dax(sql) is None
+    """Anything outside the curated set must use a visible placeholder, never a guess."""
+    assert _metric_dax(sql) == "BLANK()"
 
 
 def test_a_column_in_two_datasets_is_too_ambiguous_to_translate():
@@ -407,11 +411,11 @@ def test_a_column_in_two_datasets_is_too_ambiguous_to_translate():
     )
     with pytest.warns(UserWarning, match="does not resolve to exactly one"):
         bim = _convert(semantic_model)
-    assert all("measures" not in table for table in bim["model"]["tables"])
+    assert _table(bim, "T")["measures"][0]["expression"] == "BLANK()"
 
 
 def test_a_non_sql_dialect_is_not_parsed_as_sql():
-    assert _metric_dax("SUM([Measures].[x])", "MDX") is None
+    assert _metric_dax("SUM([Measures].[x])", "MDX") == "BLANK()"
 
 
 def test_a_metric_without_a_home_table_lands_on_the_first_table():
