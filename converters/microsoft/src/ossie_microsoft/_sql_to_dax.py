@@ -87,8 +87,8 @@ READABLE_DIALECTS = {
 #: Cross-checked against `core-spec/expression_language.md`; every emitted form has
 #: been verified to parse against the Power BI DAX grammar.
 #:
-#: Two entries deliberately depart from the spec table, because the obvious mapping
-#: is not equivalent on NULL/BLANK handling:
+#: Two entries are not the same-named DAX function, because DAX treats BLANK
+#: differently from SQL's NULL:
 #:
 #: * SQL `COUNT(x)` counts every non-NULL value whatever its type, but DAX `COUNT`
 #:   documents `TRUE`/`FALSE` values as unsupported. `COUNTA` counts non-blank values
