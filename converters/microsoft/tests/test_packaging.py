@@ -56,6 +56,7 @@ MODULES = frozenset(
         "_common",
         "_sql_to_dax",
         "cli",
+        "engine",
         "ossie_to_semantic_model",
         "semantic_model_to_ossie",
         "tom",

@@ -513,8 +513,7 @@ def test_a_metric_without_a_home_table_lands_on_the_first_table():
 def test_relationships_are_restored_with_their_original_orientation(bim_out, bim):
     by_name = {r["name"]: r for r in bim_out["model"]["relationships"]}
     original = {r["name"]: r for r in bim["model"]["relationships"]}
-    # "e5f6a7b8" is authored one-to-many; the import normalizes it to many-to-one and
-    # the export must put it back the way Power BI wrote it.
+    # "e5f6a7b8" is authored many-to-one and must survive the round trip verbatim.
     assert by_name["e5f6a7b8"] == original["e5f6a7b8"]
     assert by_name["a1b2c3d4"] == original["a1b2c3d4"]
 

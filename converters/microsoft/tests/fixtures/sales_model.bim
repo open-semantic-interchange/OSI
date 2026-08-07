@@ -32,6 +32,11 @@
             "sourceColumn": "order_date"
           },
           {
+            "name": "ShipDate",
+            "dataType": "dateTime",
+            "sourceColumn": "ship_date"
+          },
+          {
             "name": "CustomerKey",
             "dataType": "int64",
             "sourceColumn": "customer_key"
@@ -143,7 +148,8 @@
             "variations": [
               {
                 "name": "Variation",
-                "relationship": "e5f6a7b8",
+                "isDefault": true,
+                "relationship": "calendar-to-localdate",
                 "defaultHierarchy": {
                   "table": "LocalDateTable_9f2a1b3c",
                   "hierarchy": "Date Hierarchy"
@@ -188,6 +194,7 @@
       },
       {
         "name": "LocalDateTable_9f2a1b3c",
+        "showAsVariationsOnly": true,
         "columns": [
           {
             "name": "Date",
@@ -225,18 +232,22 @@
             "levels": [
               {
                 "name": "Year",
+                "ordinal": 0,
                 "column": "Year"
               },
               {
                 "name": "Quarter",
+                "ordinal": 1,
                 "column": "Quarter"
               },
               {
                 "name": "Month",
+                "ordinal": 2,
                 "column": "Month"
               },
               {
                 "name": "Day",
+                "ordinal": 3,
                 "column": "Day"
               }
             ]
@@ -283,17 +294,26 @@
       },
       {
         "name": "e5f6a7b8",
+        "fromTable": "Sales",
+        "fromColumn": "OrderDate",
+        "toTable": "Calendar",
+        "toColumn": "Date",
+        "fromCardinality": "many",
+        "toCardinality": "one"
+        },
+        {
+        "name": "calendar-to-localdate",
         "fromTable": "Calendar",
         "fromColumn": "Date",
-        "toTable": "Sales",
-        "toColumn": "OrderDate",
-        "fromCardinality": "one",
-        "toCardinality": "many"
+        "toTable": "LocalDateTable_9f2a1b3c",
+        "toColumn": "Date",
+        "fromCardinality": "many",
+        "toCardinality": "one"
       },
       {
         "name": "inactive-one",
         "fromTable": "Sales",
-        "fromColumn": "OrderDate",
+        "fromColumn": "ShipDate",
         "toTable": "Calendar",
         "toColumn": "Date",
         "isActive": false

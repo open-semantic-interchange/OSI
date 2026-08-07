@@ -57,6 +57,10 @@ def test_public_module_exports_the_converters():
 
     assert ossie_microsoft.__all__ == [
         "ConversionError",
+        "EngineFinding",
+        "EngineUnavailableError",
+        "EngineValidationError",
+        "EngineValidationResult",
         "TomUnavailableError",
         "TomValidationError",
         "TomValidationIssue",
@@ -66,6 +70,7 @@ def test_public_module_exports_the_converters():
         "convert_semantic_model_to_ossie",
         "validate_bim",
         "validate_tmsl",
+        "validate_with_engine",
     ]
     assert callable(ossie_microsoft.convert_semantic_model_to_ossie)
     assert callable(ossie_microsoft.convert_ossie_to_semantic_model)
@@ -248,6 +253,62 @@ def test_one_to_many_relationship_is_flipped(model):
     assert rel["to_columns"] == ["Date"]
 
 
+# A one-to-many relationship is authored here rather than in the shared fixture:
+# the engine rejects a "one" From end unless the relationship is one-to-one, so
+# sales_model.bim has to stay deployable.
+def _one_to_many_bim():
+    return {
+        "name": "flip",
+        "model": {
+            "tables": [
+                {"name": "Calendar", "columns": [{"name": "Date", "dataType": "dateTime"}]},
+                {"name": "Sales", "columns": [{"name": "OrderDate", "dataType": "dateTime"}]},
+            ],
+            "relationships": [
+                {
+                    "name": "flipme",
+                    "fromTable": "Calendar",
+                    "fromColumn": "Date",
+                    "toTable": "Sales",
+                    "toColumn": "OrderDate",
+                    "fromCardinality": "one",
+                    "toCardinality": "many",
+                }
+            ],
+        },
+    }
+
+
+def _flip_osi():
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return yaml.safe_load(convert_semantic_model_to_ossie(_one_to_many_bim()))
+
+
+def test_a_one_to_many_relationship_is_flipped_to_many_to_one():
+    model = _flip_osi()["semantic_model"][0]
+    rel = model["relationships"][0]
+    assert rel["from"] == "Sales"
+    assert rel["from_columns"] == ["OrderDate"]
+    assert rel["to"] == "Calendar"
+    assert rel["to_columns"] == ["Date"]
+
+
+def test_a_flipped_relationship_records_its_original_orientation():
+    model = _flip_osi()["semantic_model"][0]
+    stash = read_stash(model["relationships"][0])
+    assert stash["flipped"] is True
+    assert stash["fromCardinality"] == "one"
+
+
+def test_a_flipped_relationship_is_exported_the_way_power_bi_wrote_it():
+    bim = _one_to_many_bim()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        round_tripped = convert_ossie_to_semantic_model(_flip_osi())
+    assert round_tripped["model"]["relationships"][0] == bim["model"]["relationships"][0]
+
+
 def test_inactive_many_to_many_and_dangling_relationships_are_dropped(model):
     assert len(model["relationships"]) == 2
     assert all("Internal Staging" not in (r["from"], r["to"]) for r in model["relationships"])
@@ -279,8 +340,8 @@ def test_model_stash_preserves_excluded_tables_and_relationships(model):
     assert stash["culture"] == "en-US"
     excluded = {t["name"] for t in stash["excludedTables"]}
     assert excluded == {"LocalDateTable_9f2a1b3c", "Internal Staging", "Time Intelligence"}
-    # Inactive, many-to-many and dangling relationships are kept verbatim.
-    assert len(stash["excludedRelationships"]) == 3
+    # Inactive, many-to-many, dangling and auto-date-table relationships are kept verbatim.
+    assert len(stash["excludedRelationships"]) == 4
 
 
 def test_dataset_stash_preserves_partitions_and_annotations(model):
@@ -300,12 +361,15 @@ def test_metric_stash_records_the_home_table(model):
 
 
 def test_relationship_stash_records_a_flipped_orientation(model):
-    flipped = next(
+    # The shared fixture is authored many-to-one (the only orientation the engine
+    # accepts), so nothing in it flips; the flip itself is covered above.
+    unflipped = next(
         r for r in model["relationships"] if r["from"] == "Sales" and r["to"] == "Calendar"
     )
-    stash = read_stash(flipped)
-    assert stash["flipped"] is True
-    assert stash["fromCardinality"] == "one"
+    stash = read_stash(unflipped)
+    assert "flipped" not in stash
+    assert stash["fromCardinality"] == "many"
+    assert stash["toCardinality"] == "one"
 
 
 def test_a_model_without_power_bi_specifics_has_no_stash():

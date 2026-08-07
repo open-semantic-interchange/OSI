@@ -61,6 +61,39 @@ validation checks TMSL structure and object references. **Offline
 TOM does not parse or validate DAX**, including syntax, function names, arity, or column
 references, so use a separate DAX parser when that guarantee is required.
 
+### Optional live engine validation
+
+The gap above is only fully closed by the engine itself: nothing offline compiles DAX the
+way Analysis Services does. `validate_with_engine` deploys a model to a Fabric workspace,
+refreshes it -- which is what actually compiles the DAX -- evaluates every table and
+measure, and then deletes it again.
+
+```python
+from ossie_microsoft import validate_with_engine
+
+result = validate_with_engine(
+    bim,
+    workspace="<workspace id>",
+    fabric_token=...,   # scope https://api.fabric.microsoft.com
+    powerbi_token=...,  # scope https://analysis.windows.net/powerbi/api
+)
+result.raise_for_errors()
+```
+
+Every partition is rewritten as an inline M literal of generated sample rows, so the
+refresh needs no gateway, lakehouse or stored credential; tables, columns, relationships
+and measures are otherwise untouched, so what the engine compiles is the DAX the converter
+produced.
+
+This is the **only** validation in this package that leaves the local machine. It creates
+real items in a real workspace and consumes capacity, so it is opt-in, it is not part of
+the default test run, and it is deliberately not wired into CI.
+
+One behaviour is worth knowing: a measure whose DAX fails to compile is *dropped* from the
+deployed model, so referencing it by name returns no rows rather than an error. The
+validator re-evaluates the expression inline to recover the real diagnostic, because a
+silent empty result is exactly the failure mode this package exists to prevent.
+
 ## Usage
 
 ### Command line
