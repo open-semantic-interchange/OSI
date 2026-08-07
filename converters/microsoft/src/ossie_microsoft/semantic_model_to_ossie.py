@@ -31,6 +31,7 @@ reported through :func:`ossie_microsoft._common.warn`.
 """
 
 import re
+
 import yaml
 
 from ._common import (
