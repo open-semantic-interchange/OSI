@@ -128,37 +128,3 @@ Sigma's backend.
 Sigma data models are single models; `OSIDocument.semantic_model` is a list. Only
 `semantic_model[0]` is converted, with `EXTRA_MODEL_DROPPED` naming how many were
 dropped.
-
-## How this is tested
-
-- **Formula unit tests** — every supported function and operator in both directions,
-  plus operator-precedence, quote-escaping, untranslatable, and unparseable cases.
-- **Three fixtures**, covering the spec surface documented for the data model
-  endpoints: `fixtureA` (warehouse tables, folders/order/summary/sort, `uniqueKeys`,
-  `columnSecurities`, both format kinds with full display detail, metric
-  `timeline`/`isHighlighted`, `relationshipType`, hidden and unnamed objects);
-  `fixtureB` (all six filter kinds, all five non-warehouse source kinds, composite
-  relationship mixing both key addressing schemes, `groupings`, unrecognized format,
-  untranslatable table calculation); `fixtureC` (unknown element kind and unknown
-  element/column keys, i.e. forward compatibility).
-- **Round-trip tests** — all three fixtures survive Sigma → Ossie → Sigma structurally
-  byte-for-byte, including through the CLI's YAML boundary, and Sigma → Ossie → Sigma →
-  Ossie preserves all portable content.
-- **Foreign-origin coverage** — the reverse converter runs against
-  `examples/tpcds_semantic_model.yaml`, a document that never touched Sigma, checking
-  synthesized ids, SQL-to-formula translation, metric placement, and dropped
-  cross-dataset metrics.
-
-Not covered: a fixture from a real production data model. The fixtures are synthetic by
-choice, to avoid embedding any organization's schema in an ASF repository.
-
-## Fixes bundled with this change
-
-Both were pre-existing gaps found while validating output, and block any converter, not
-just this one:
-
-- `core-spec/osi-schema.json` was missing root-level `dialects`/`vendors`, which
-  `OSIDocument` has had all along.
-- `validation/validate.py` parsed every dialect's expression as SQL; its own
-  `SKIP_SQL_VALIDATION` set already excluded `MDX`/`TABLEAU`/`MAQL` for that reason, so
-  `SIGMA` was added alongside the new dialect.
