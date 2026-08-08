@@ -55,20 +55,49 @@ _MODEL_LEVEL_SPEC_KEYS = (
     "url",
 )
 
-# Sigma column `format.kind` -> portable Ossie datatype. Anything not listed here has
-# no portable equivalent and becomes `Opaque` (with the original format preserved).
+# Spec keys this converter maps onto a portable Ossie concept. Everything else on an
+# element/column/metric/relationship is Sigma-native presentation or governance state
+# (`filters`, `folders`, `order`, `sort`, `summary`, `groupings`, `columnSecurities`,
+# `visibleAsSource`, `hidden`, `isHighlighted`, `timeline`, `relationshipType`, ...)
+# and is preserved verbatim under a `native` key in `custom_extensions`. Capturing the
+# residue by subtraction rather than by an allow-list means a future `schemaVersion`
+# that adds a field still round-trips losslessly instead of silently dropping it.
+_MAPPED_MODEL_KEYS = frozenset({"name", "description", "pages"})
+_MAPPED_ELEMENT_KEYS = frozenset(
+    {"id", "kind", "name", "description", "source", "columns", "metrics", "relationships", "uniqueKeys"}
+)
+_MAPPED_COLUMN_KEYS = frozenset({"id", "formula", "name", "description", "format"})
+_MAPPED_METRIC_KEYS = frozenset({"id", "formula", "name", "description"})
+_MAPPED_RELATIONSHIP_KEYS = frozenset({"id", "name", "description", "targetElementId", "keys"})
+
+# Sigma column formats describe *display* formatting, not storage type — the data model
+# spec has no datatype field at all — so only the two documented format kinds carry any
+# type signal, and only coarsely. Anything else is `Opaque` with the format preserved.
 _FORMAT_TO_DATATYPE = {
-    "string": "String",
-    "text": "String",
-    "integer": "Integer",
     "number": "Decimal",
-    "currency": "Decimal",
-    "percent": "Decimal",
-    "boolean": "Boolean",
-    "date": "Date",
-    "datetime": "DateTime",
-    "time": "Time",
+    "date": "DateTime",
 }
+
+
+def _native_residue(obj: dict[str, Any], mapped: frozenset) -> dict[str, Any]:
+    """Return the entries of *obj* that no portable Ossie concept covers."""
+    return {k: v for k, v in obj.items() if k not in mapped}
+
+
+def _derived_source_marker(source: dict[str, Any], element_id: str) -> str:
+    """A readable ``OSIDataset.source`` stand-in for a non-warehouse-table source.
+
+    The authoritative copy is the full native `source` block in `custom_extensions`;
+    this only has to be human-readable and stable.
+    """
+    kind = source.get("kind") or "unknown"
+    if kind == "sql":
+        return f"sql:{source.get('connectionId', element_id)}"
+    if kind == "data-model":
+        return f"data-model:{source.get('dataModelId', '')}/{source.get('elementId', '')}"
+    if kind in ("table", "join", "union"):
+        return f"{kind}:{source.get('elementId', element_id)}"
+    return f"{kind}:{element_id}"
 
 
 def _vendor_ext(data: dict[str, Any]) -> OSICustomExtension:
@@ -145,17 +174,21 @@ class SigmaToOSIConverter:
             dataset_name = element.get("name", element["id"])
             source = element.get("source") or {}
 
-            if source.get("kind") == "warehouse-table":
+            source_kind = source.get("kind")
+            if source_kind == "warehouse-table":
                 source_str = ".".join(source.get("path") or [])
             else:
-                source_str = f"element:{source.get('elementId', element['id'])}"
+                # `sql`, `table`, `data-model`, `join` and `union` sources have no
+                # `database.schema.table` location to put in OSIDataset.source.
+                source_str = _derived_source_marker(source, element["id"])
                 issues.append(
                     ConverterIssue(
                         ConverterIssueType.DERIVED_ELEMENT_NOT_MODELED,
                         dataset_name,
-                        "Element is derived from another element rather than a warehouse table; "
-                        "Ossie has no first-class 'derived dataset' concept, so the parent "
-                        "reference is carried in custom_extensions only.",
+                        f"Element source kind {source_kind!r} is not a warehouse table; Ossie's "
+                        "OSIDataset.source is a physical location string and Ossie has no "
+                        "first-class 'derived dataset' concept, so the full native source block "
+                        "is carried in custom_extensions and `source` holds a marker only.",
                     )
                 )
 
@@ -182,11 +215,14 @@ class SigmaToOSIConverter:
                 folder = _folder_for_column(element, column["id"])
                 if folder is not None:
                     ext_data["folder_id"] = folder["id"]
-                if fmt_kind:
-                    mapped = _FORMAT_TO_DATATYPE.get(fmt_kind)
-                    if mapped is None:
+                if fmt:
+                    # The format object carries display detail (formatString, prefix,
+                    # currencySymbol, ...) that no Ossie field models, so it is always
+                    # preserved whole, even when `kind` did yield a datatype.
+                    ext_data["format"] = fmt
+                    datatype = _FORMAT_TO_DATATYPE.get(fmt_kind)
+                    if datatype is None:
                         datatype = "Opaque"
-                        ext_data["format"] = fmt
                         issues.append(
                             ConverterIssue(
                                 ConverterIssueType.OPAQUE_DATATYPE,
@@ -194,8 +230,9 @@ class SigmaToOSIConverter:
                                 f"Sigma column format {fmt_kind!r} has no portable Ossie datatype.",
                             )
                         )
-                    else:
-                        datatype = mapped
+                native = _native_residue(column, _MAPPED_COLUMN_KEYS)
+                if native:
+                    ext_data["native"] = native
 
                 fields.append(
                     OSIField(
@@ -212,32 +249,31 @@ class SigmaToOSIConverter:
                 "page_id": page.get("id"),
                 "page_name": page.get("name"),
             }
-            if source.get("connectionId"):
-                dataset_ext["connectionId"] = source["connectionId"]
-            if source.get("kind"):
-                dataset_ext["source_kind"] = source["kind"]
-            if source.get("elementId"):
-                dataset_ext["source_element_id"] = source["elementId"]
-            if element.get("folders"):
-                dataset_ext["folders"] = element["folders"]
-            if element.get("order"):
-                dataset_ext["order"] = element["order"]
+            if source:
+                dataset_ext["source"] = source
+            native = _native_residue(element, _MAPPED_ELEMENT_KEYS)
+            if native:
+                dataset_ext["native"] = native
             if element.get("filters"):
-                dataset_ext["filters"] = element["filters"]
                 issues.append(
                     ConverterIssue(
                         ConverterIssueType.FILTER_NOT_MODELED,
                         dataset_name,
-                        "Sigma named/static element filters have no Ossie equivalent (they are a "
-                        "presentation-layer concept, not part of the portable semantic model); "
-                        "preserved verbatim in custom_extensions only.",
+                        "Sigma element filters (`number-range`, `date-range`, `top-n`, `list`, "
+                        "`text-match`, `hierarchy`) restrict which rows an element shows; Ossie "
+                        "models the shape of a dataset, not a saved row restriction on it, so "
+                        "they are preserved verbatim in custom_extensions only.",
                     )
                 )
+
+            index = index_by_id[element["id"]]
+            unique_keys = [name for name, _ in (index.resolve(c) for c in element.get("uniqueKeys") or [])]
 
             datasets.append(
                 OSIDataset(
                     name=dataset_name,
                     source=source_str,
+                    primary_key=unique_keys or None,
                     description=element.get("description"),
                     fields=fields or None,
                     custom_extensions=[_vendor_ext(dataset_ext)],
@@ -265,11 +301,19 @@ class SigmaToOSIConverter:
                         )
                     )
 
+                metric_ext: dict[str, Any] = {"id": metric["id"], "element_id": element["id"]}
+                if metric.get("name"):
+                    metric_ext["explicit_name"] = True
+                native = _native_residue(metric, _MAPPED_METRIC_KEYS)
+                if native:
+                    metric_ext["native"] = native
+
                 metrics.append(
                     OSIMetric(
                         name=metric_name,
                         expression=OSIExpression(dialects=dialect_exprs),
-                        custom_extensions=[_vendor_ext({"id": metric["id"], "element_id": element["id"]})],
+                        description=metric.get("description"),
+                        custom_extensions=[_vendor_ext(metric_ext)],
                     )
                 )
 
@@ -301,13 +345,18 @@ class SigmaToOSIConverter:
                             )
                         )
 
-                rel_ext = {
+                rel_ext: dict[str, Any] = {
                     "id": rel["id"],
                     "element_id": element["id"],
                     "raw_keys": rel.get("keys"),
                 }
+                if rel.get("name"):
+                    rel_ext["explicit_name"] = True
                 if rel.get("description"):
                     rel_ext["description"] = rel["description"]
+                native = _native_residue(rel, _MAPPED_RELATIONSHIP_KEYS)
+                if native:
+                    rel_ext["native"] = native
 
                 relationships.append(
                     OSIRelationship(
@@ -321,6 +370,9 @@ class SigmaToOSIConverter:
                 )
 
         model_ext: dict[str, Any] = {k: spec[k] for k in _MODEL_LEVEL_SPEC_KEYS if k in spec}
+        native = _native_residue(spec, _MAPPED_MODEL_KEYS | frozenset(_MODEL_LEVEL_SPEC_KEYS))
+        if native:
+            model_ext["native"] = native
         if other_elements:
             model_ext["non_table_elements"] = [
                 {"page_id": page.get("id"), "page_name": page.get("name"), "element": element}
@@ -329,16 +381,17 @@ class SigmaToOSIConverter:
             for _, element in other_elements:
                 issues.append(
                     ConverterIssue(
-                        ConverterIssueType.CONTROL_ELEMENT_NOT_MODELED,
-                        element.get("name") or element.get("controlId") or element["id"],
-                        f"Sigma element kind {element.get('kind')!r} (e.g. workbook controls/filters) has "
-                        "no equivalent in the Ossie semantic model; preserved verbatim in "
+                        ConverterIssueType.UNSUPPORTED_ELEMENT_KIND,
+                        element.get("name") or element["id"],
+                        f"Sigma element kind {element.get('kind')!r} is not a table and has no "
+                        "equivalent in the Ossie semantic model; preserved verbatim in "
                         "custom_extensions only. See LIMITATIONS.md.",
                     )
                 )
 
         semantic_model = OSISemanticModel(
             name=spec.get("name", "sigma_data_model"),
+            description=spec.get("description"),
             datasets=datasets,
             relationships=relationships or None,
             metrics=metrics or None,

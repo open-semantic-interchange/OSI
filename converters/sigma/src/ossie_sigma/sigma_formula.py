@@ -15,19 +15,27 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""A parser and ANSI SQL renderer for Sigma's spreadsheet-style formula language.
+"""A parser and SQL renderer for Sigma's spreadsheet-style formula language.
 
 Sigma data model column and metric formulas look like ``Sum([Orders/Amount])`` or
-``If([Status] = "closed", 1, 0)``. This module implements a small recursive-descent
-parser that turns such a formula into an AST (:class:`FormulaNode`), and a renderer
-that turns that AST into ANSI SQL where a faithful translation exists.
+``If([Status] = "closed", 1, 0)``. Sigma's formula language is not SQL, so — unlike
+converters whose native expressions are already SQL (e.g. NVIDIA GSF, which parses
+straight into sqlglot) — a real tokenizer and recursive-descent parser is needed to
+get from formula text to a tree (:class:`FormulaNode`).
 
-Design principle (matching the rest of the Ossie converter ecosystem, e.g. the GSF
-converter's SQL-dialect handling): never fail. A formula that cannot be parsed, or
-that uses a function with no portable SQL equivalent, is simply not translatable —
-callers fall back to carrying the original Sigma formula text verbatim (see
-``ossie_sigma.sigma_to_osi``), rather than raising or emitting an approximate/lossy
-translation.
+From there, though, this module does what the other converters do: it translates into
+a **sqlglot expression tree** and lets sqlglot's generator emit the SQL. That means
+identifier quoting, string escaping, and operator precedence/parenthesisation are the
+library's job rather than hand-rolled string concatenation, and targeting a warehouse
+dialect other than ANSI is a ``dialect=`` argument (see :func:`to_sql`) rather than a
+second renderer. The reverse direction (:func:`sql_to_sigma_formula`) walks a sqlglot
+tree back into formula text, so both directions share one intermediate representation.
+
+Design principle (matching the rest of the Ossie converter ecosystem): never fail. A
+formula that cannot be parsed, or that uses a function with no portable SQL
+equivalent, is simply not translatable — callers fall back to carrying the original
+Sigma formula text verbatim (see ``ossie_sigma.sigma_to_osi``), rather than raising or
+emitting an approximate/lossy translation.
 """
 
 from __future__ import annotations
@@ -35,6 +43,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Optional, Union
+
+import sqlglot
+from sqlglot import expressions as exp
 
 
 class FormulaParseError(Exception):
@@ -307,20 +318,17 @@ def is_plain_column_ref(formula: str) -> Optional[ColumnRef]:
 
 
 # --------------------------------------------------------------------------
-# ANSI SQL rendering
+# SQL rendering (Sigma AST -> sqlglot AST -> SQL text)
 # --------------------------------------------------------------------------
 
 
-def _quote_ident(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
+class _NotTranslatable(Exception):
+    pass
 
 
-def _sql_string_literal(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
-
-
-# Functions that map 1:1 onto an ANSI SQL function/aggregate of the same arity,
-# keyed by lowercase Sigma name -> ANSI SQL name.
+# Functions that map 1:1 onto a SQL function/aggregate of the same arity, keyed by
+# lowercase Sigma name -> SQL name. ``exp.func`` resolves each name to sqlglot's typed
+# node where one exists, so the generator can render it per target dialect.
 _DIRECT_FUNCTIONS = {
     "sum": "SUM",
     "avg": "AVG",
@@ -336,11 +344,10 @@ _DIRECT_FUNCTIONS = {
     "ceiling": "CEIL",
     "floor": "FLOOR",
     "sqrt": "SQRT",
-    "length": "CHAR_LENGTH",
+    "length": "LENGTH",
     "power": "POWER",
     "mod": "MOD",
     "coalesce": "COALESCE",
-    "lower_": "LOWER",
 }
 
 _EXTRACT_PARTS = {
@@ -356,136 +363,233 @@ _EXTRACT_PARTS = {
 }
 
 
-class _NotTranslatable(Exception):
-    pass
+_BINOP_NODES = {
+    "+": exp.Add,
+    "-": exp.Sub,
+    "*": exp.Mul,
+    "/": exp.Div,
+    "&": exp.DPipe,
+    "^": exp.Pow,
+    "=": exp.EQ,
+    "<>": exp.NEQ,
+    "<": exp.LT,
+    "<=": exp.LTE,
+    ">": exp.GT,
+    ">=": exp.GTE,
+    "AND": exp.And,
+    "OR": exp.Or,
+}
 
 
-def _render_node(node: FormulaNode, dataset_alias: Optional[str]) -> str:
+# sqlglot's generator prints the tree it is given verbatim — it does not re-insert
+# parentheses that the tree's shape implies — so a manually built tree has to carry
+# its own ``exp.Paren`` nodes. Binding power per node type, lowest first; anything
+# absent (function calls, CASE, literals, columns) is self-delimiting and never needs
+# wrapping. Non-associative operators additionally parenthesise an equal-precedence
+# right operand, so ``a - (b - c)`` does not collapse into ``a - b - c``.
+_PRECEDENCE: tuple[tuple[tuple[type, ...], int], ...] = (
+    ((exp.Or,), 1),
+    ((exp.And,), 2),
+    ((exp.Not,), 3),
+    ((exp.EQ, exp.NEQ, exp.LT, exp.LTE, exp.GT, exp.GTE, exp.Is, exp.Like), 4),
+    ((exp.DPipe,), 5),
+    ((exp.Add, exp.Sub), 6),
+    ((exp.Mul, exp.Div, exp.Mod), 7),
+)
+_NON_ASSOCIATIVE = (exp.Sub, exp.Div, exp.Mod, exp.EQ, exp.NEQ, exp.LT, exp.LTE, exp.GT, exp.GTE)
+
+
+def _binding_power(node: exp.Expression) -> int:
+    for types, power in _PRECEDENCE:
+        if isinstance(node, types):
+            return power
+    return 100
+
+
+def _maybe_paren(child: exp.Expression, parent_power: int, tighter: bool) -> exp.Expression:
+    """Wrap *child* in parentheses when the parent operator binds at least as tightly.
+
+    *tighter* asks for the strict comparison used on the right operand of a
+    non-associative operator, where equal precedence still needs the parentheses.
+    """
+    power = _binding_power(child)
+    if power < parent_power or (tighter and power == parent_power):
+        return exp.Paren(this=child)
+    return child
+
+
+def _concat(*parts: exp.Expression) -> exp.Expression:
+    node = parts[0]
+    for part in parts[1:]:
+        node = exp.DPipe(this=node, expression=part)
+    return node
+
+
+def _case(cond: exp.Expression, then: exp.Expression, otherwise: Optional[exp.Expression]) -> exp.Case:
+    return exp.Case(ifs=[exp.If(this=cond, true=then)], default=otherwise)
+
+
+def _within_group(percentile: exp.Expression, value: exp.Expression) -> exp.Expression:
+    return exp.WithinGroup(
+        this=exp.PercentileCont(this=percentile),
+        expression=exp.Order(expressions=[value]),
+    )
+
+
+def _build_node(node: FormulaNode, dataset_alias: Optional[str]) -> exp.Expression:
+    """Translate a Sigma AST node into an equivalent sqlglot expression node."""
     if isinstance(node, ColumnRef):
+        column = exp.to_identifier(node.column, quoted=True)
         if node.table is not None and node.table != dataset_alias:
-            return f"{_quote_ident(node.table)}.{_quote_ident(node.column)}"
-        return _quote_ident(node.column)
+            return exp.column(column, exp.to_identifier(node.table, quoted=True))
+        return exp.column(column)
 
     if isinstance(node, Literal):
         if node.kind == "string":
-            return _sql_string_literal(str(node.value))
+            return exp.Literal.string(str(node.value))
         if node.kind == "boolean":
-            return "TRUE" if node.value else "FALSE"
-        return repr(node.value)
+            return exp.true() if node.value else exp.false()
+        return exp.Literal.number(node.value)
 
     if isinstance(node, UnaryOp):
-        inner = _render_node(node.operand, dataset_alias)
+        inner = _build_node(node.operand, dataset_alias)
         if node.op == "NOT":
-            return f"NOT ({inner})"
-        return f"{node.op}({inner})"
+            return exp.Not(this=_maybe_paren(inner, _binding_power(exp.Not()), tighter=False))
+        if node.op == "-":
+            return exp.Neg(this=_maybe_paren(inner, 100, tighter=False))
+        return inner  # unary plus is a no-op
 
     if isinstance(node, BinOp):
-        left = _render_node(node.left, dataset_alias)
-        right = _render_node(node.right, dataset_alias)
-        if node.op == "&":
-            return f"({left} || {right})"
-        if node.op == "^":
-            return f"POWER({left}, {right})"
-        return f"({left} {node.op} {right})"
+        builder = _BINOP_NODES.get(node.op)
+        if builder is None:
+            raise _NotTranslatable(f"No SQL mapping for operator {node.op!r}")
+        # ``^`` and the boolean operators render as POWER(...)/AND/OR, which are either
+        # self-delimiting or handled by the precedence table like any other operator.
+        left = _build_node(node.left, dataset_alias)
+        right = _build_node(node.right, dataset_alias)
+        if builder is exp.Pow:
+            return builder(this=left, expression=right)
+        power = _binding_power(builder())
+        return builder(
+            this=_maybe_paren(left, power, tighter=False),
+            expression=_maybe_paren(right, power, tighter=issubclass(builder, _NON_ASSOCIATIVE)),
+        )
 
     if isinstance(node, FuncCall):
-        return _render_call(node, dataset_alias)
+        return _build_call(node, dataset_alias)
 
     raise _NotTranslatable(f"Unknown node type: {node!r}")
 
 
-def _args(node: FuncCall, dataset_alias: Optional[str]) -> list[str]:
-    return [_render_node(a, dataset_alias) for a in node.args]
-
-
-def _render_string_slice(name: str, args: tuple[FormulaNode, ...], dataset_alias: Optional[str]) -> str:
-    text = _render_node(args[0], dataset_alias)
+def _build_string_slice(
+    name: str, args: tuple[FormulaNode, ...], dataset_alias: Optional[str]
+) -> exp.Expression:
+    text = _build_node(args[0], dataset_alias)
     if name == "left" and len(args) == 2:
-        n = _render_node(args[1], dataset_alias)
-        return f"SUBSTRING({text} FROM 1 FOR {n})"
+        return exp.Substring(this=text, start=exp.Literal.number(1), length=_build_node(args[1], dataset_alias))
     if name == "right" and len(args) == 2:
-        n = _render_node(args[1], dataset_alias)
-        return f"SUBSTRING({text} FROM CHAR_LENGTH({text}) - ({n}) + 1 FOR {n})"
+        length = _build_node(args[1], dataset_alias)
+        start = exp.Add(
+            this=exp.Sub(this=exp.func("LENGTH", text.copy()), expression=length.copy()),
+            expression=exp.Literal.number(1),
+        )
+        return exp.Substring(this=text, start=start, length=length)
     if name in ("mid", "substring") and len(args) == 3:
-        start = _render_node(args[1], dataset_alias)
-        length = _render_node(args[2], dataset_alias)
-        return f"SUBSTRING({text} FROM {start} FOR {length})"
+        return exp.Substring(
+            this=text,
+            start=_build_node(args[1], dataset_alias),
+            length=_build_node(args[2], dataset_alias),
+        )
     if name in ("mid", "substring") and len(args) == 2:
-        start = _render_node(args[1], dataset_alias)
-        return f"SUBSTRING({text} FROM {start})"
+        return exp.Substring(this=text, start=_build_node(args[1], dataset_alias))
     raise _NotTranslatable(f"Unsupported arity for {name}: {len(args)} args")
 
 
-def _render_call(node: FuncCall, dataset_alias: Optional[str]) -> str:
+_DATE_PART_UNITS = frozenset(
+    {"year", "quarter", "month", "week", "day", "hour", "minute", "second", "millisecond"}
+)
+
+
+def _date_part_unit(node: FormulaNode) -> exp.Expression:
+    """Turn Sigma's trailing ``"day"``-style date-part argument into a SQL unit keyword."""
+    if isinstance(node, Literal) and node.kind == "string":
+        unit = str(node.value).lower().rstrip("s")
+        if unit in _DATE_PART_UNITS:
+            return exp.var(unit.upper())
+    raise _NotTranslatable(f"Unsupported date part: {node!r}")
+
+
+def _build_call(node: FuncCall, dataset_alias: Optional[str]) -> exp.Expression:
     name = node.name.lower()
     args = node.args
+    built = [_build_node(a, dataset_alias) for a in args]
 
     if name == "countdistinct" and len(args) == 1:
-        return f"COUNT(DISTINCT {_render_node(args[0], dataset_alias)})"
+        return exp.Count(this=exp.Distinct(expressions=[built[0]]))
     if name == "median" and len(args) == 1:
-        return f"PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY {_render_node(args[0], dataset_alias)})"
+        return _within_group(exp.Literal.number(0.5), built[0])
     if name == "percentile" and len(args) == 2:
-        return (
-            f"PERCENTILE_CONT({_render_node(args[1], dataset_alias)}) "
-            f"WITHIN GROUP (ORDER BY {_render_node(args[0], dataset_alias)})"
-        )
+        return _within_group(built[1], built[0])
     if name in ("variance", "var") and len(args) == 1:
-        return f"VAR_SAMP({_render_node(args[0], dataset_alias)})"
+        return exp.func("VAR_SAMP", built[0])
     if name in ("stddev", "standarddeviation") and len(args) == 1:
-        return f"STDDEV_SAMP({_render_node(args[0], dataset_alias)})"
+        return exp.func("STDDEV_SAMP", built[0])
 
     if name == "if" and len(args) == 3:
-        cond, then, otherwise = (_render_node(a, dataset_alias) for a in args)
-        return f"CASE WHEN {cond} THEN {then} ELSE {otherwise} END"
+        return _case(built[0], built[1], built[2])
     if name == "ifnull" and len(args) == 2:
-        return f"COALESCE({_render_node(args[0], dataset_alias)}, {_render_node(args[1], dataset_alias)})"
+        return exp.Coalesce(this=built[0], expressions=[built[1]])
     if name == "isnull" and len(args) == 1:
-        return f"({_render_node(args[0], dataset_alias)} IS NULL)"
+        return exp.Is(this=built[0], expression=exp.Null())
     if name == "isnotnull" and len(args) == 1:
-        return f"({_render_node(args[0], dataset_alias)} IS NOT NULL)"
+        return exp.Not(this=exp.Is(this=built[0], expression=exp.Null()))
 
     if name == "sumif" and len(args) == 2:
-        cond, expr = (_render_node(a, dataset_alias) for a in args)
-        return f"SUM(CASE WHEN {cond} THEN {expr} ELSE 0 END)"
+        return exp.Sum(this=_case(built[0], built[1], exp.Literal.number(0)))
     if name == "countif" and len(args) == 1:
-        cond = _render_node(args[0], dataset_alias)
-        return f"COUNT(CASE WHEN {cond} THEN 1 END)"
+        return exp.Count(this=_case(built[0], exp.Literal.number(1), None))
     if name == "countdistinctif" and len(args) == 2:
-        cond, expr = (_render_node(a, dataset_alias) for a in args)
-        return f"COUNT(DISTINCT CASE WHEN {cond} THEN {expr} END)"
+        return exp.Count(this=exp.Distinct(expressions=[_case(built[0], built[1], None)]))
     if name == "averageif" and len(args) == 2:
-        cond, expr = (_render_node(a, dataset_alias) for a in args)
-        return f"AVG(CASE WHEN {cond} THEN {expr} END)"
+        return exp.Avg(this=_case(built[0], built[1], None))
 
     if name in ("left", "right", "mid", "substring") and args:
-        return _render_string_slice(name, args, dataset_alias)
+        return _build_string_slice(name, args, dataset_alias)
 
-    if name == "concat":
-        return " || ".join(_args(node, dataset_alias))
+    if name == "concat" and built:
+        return _concat(*built)
 
     if name == "contains" and len(args) == 2:
-        text, needle = _args(node, dataset_alias)
-        return f"({text} LIKE '%' || {needle} || '%')"
+        pattern = _concat(exp.Literal.string("%"), built[1], exp.Literal.string("%"))
+        return exp.Like(this=built[0], expression=pattern)
     if name == "startswith" and len(args) == 2:
-        text, needle = _args(node, dataset_alias)
-        return f"({text} LIKE {needle} || '%')"
+        return exp.Like(this=built[0], expression=_concat(built[1], exp.Literal.string("%")))
     if name == "endswith" and len(args) == 2:
-        text, needle = _args(node, dataset_alias)
-        return f"({text} LIKE '%' || {needle})"
+        return exp.Like(this=built[0], expression=_concat(exp.Literal.string("%"), built[1]))
     if name == "replace" and len(args) == 3:
-        return f"REPLACE({', '.join(_args(node, dataset_alias))})"
+        return exp.func("REPLACE", *built)
 
-    if name == "today" and len(args) == 0:
-        return "CURRENT_DATE"
-    if name == "now" and len(args) == 0:
-        return "CURRENT_TIMESTAMP"
+    if name == "today" and not args:
+        return exp.CurrentDate()
+    if name == "now" and not args:
+        return exp.CurrentTimestamp()
+    if name == "null" and not args:
+        return exp.Null()
     if name in _EXTRACT_PARTS and len(args) == 1:
-        return f"EXTRACT({_EXTRACT_PARTS[name]} FROM {_render_node(args[0], dataset_alias)})"
+        return exp.Extract(this=exp.var(_EXTRACT_PARTS[name]), expression=built[0])
+
+    # Sigma passes the date part as a trailing string literal: DateAdd(d, n, "day"),
+    # DateDiff(start, end, "day"). SQL wants it as an unquoted unit keyword.
+    if name in ("dateadd", "datediff") and len(args) == 3:
+        unit = _date_part_unit(args[2])
+        if name == "dateadd":
+            return exp.DateAdd(this=built[0], expression=built[1], unit=unit)
+        return exp.DateDiff(this=built[1], expression=built[0], unit=unit)
 
     if name in _DIRECT_FUNCTIONS:
-        return f"{_DIRECT_FUNCTIONS[name]}({', '.join(_args(node, dataset_alias))})"
+        return exp.func(_DIRECT_FUNCTIONS[name], *built)
 
-    raise _NotTranslatable(f"No ANSI SQL mapping for Sigma function {node.name!r}")
+    raise _NotTranslatable(f"No SQL mapping for Sigma function {node.name!r}")
 
 
 _REVERSE_AGG_FUNCTIONS = {
@@ -516,9 +620,6 @@ def sql_to_sigma_formula(sql: str, dataset_alias: Optional[str] = None) -> Optio
     be parsed, or uses a SQL construct with no Sigma formula-language equivalent —
     callers should treat that as "not translatable", not fail the conversion.
     """
-    import sqlglot
-    from sqlglot import expressions as exp
-
     try:
         tree = sqlglot.parse_one(sql)
     except Exception:  # noqa: BLE001 - sqlglot raises several internal error types
@@ -530,9 +631,7 @@ def sql_to_sigma_formula(sql: str, dataset_alias: Optional[str] = None) -> Optio
         return None
 
 
-def _render_sql_node(node: "object", dataset_alias: Optional[str]) -> str:  # noqa: ANN001
-    import sqlglot.expressions as exp
-
+def _render_sql_node(node: exp.Expression, dataset_alias: Optional[str]) -> str:
     if isinstance(node, exp.Column):
         parts = [p.name for p in node.parts]
         if len(parts) == 2:
@@ -635,18 +734,29 @@ def _render_sql_node(node: "object", dataset_alias: Optional[str]) -> str:  # no
     raise _NotTranslatable(f"No Sigma formula equivalent for SQL node {node.__class__.__name__}")
 
 
-def to_ansi_sql(node: FormulaNode, dataset_alias: Optional[str] = None) -> Optional[str]:
-    """Render *node* as ANSI SQL, or return ``None`` if it uses a construct with no
-    portable SQL equivalent (e.g. a table-calculation function like ``RunningSum``
-    that depends on UI-configured partition/order context Sigma does not pass as
-    formula arguments).
+def to_sqlglot(node: FormulaNode, dataset_alias: Optional[str] = None) -> Optional[exp.Expression]:
+    """Translate *node* into a sqlglot expression tree, or ``None`` if untranslatable."""
+    try:
+        return _build_node(node, dataset_alias)
+    except _NotTranslatable:
+        return None
+
+
+def to_sql(node: FormulaNode, dataset_alias: Optional[str] = None, dialect: str = "") -> Optional[str]:
+    """Render *node* as SQL in *dialect* (sqlglot's ANSI-closest generator by default),
+    or return ``None`` if it uses a construct with no portable SQL equivalent (e.g. a
+    table-calculation function like ``RunningSum`` that depends on UI-configured
+    partition/order context Sigma does not pass as formula arguments).
 
     *dataset_alias* is the name of the dataset the expression is being rendered for;
     column references qualified with that same table name are rendered unqualified
     (since the expression lives inside that dataset's own scope), while references
     to any other table are rendered as ``"other_table"."column"``.
     """
-    try:
-        return _render_node(node, dataset_alias)
-    except _NotTranslatable:
-        return None
+    tree = to_sqlglot(node, dataset_alias)
+    return None if tree is None else tree.sql(dialect=dialect)
+
+
+def to_ansi_sql(node: FormulaNode, dataset_alias: Optional[str] = None) -> Optional[str]:
+    """Render *node* as ANSI SQL. See :func:`to_sql`."""
+    return to_sql(node, dataset_alias=dataset_alias)

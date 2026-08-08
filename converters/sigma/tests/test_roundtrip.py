@@ -16,7 +16,7 @@
 # under the License.
 
 """End-to-end round trips through the same serialization boundary the CLI uses
-(OSIDocument -> YAML text -> re-parsed OSIDocument), for both fixtures."""
+(OSIDocument -> YAML text -> re-parsed OSIDocument), for every fixture."""
 
 import pytest
 import yaml
@@ -28,7 +28,10 @@ from ossie_sigma.sigma_to_osi import SigmaToOSIConverter
 from .helpers import load_fixture, normalize
 
 
-@pytest.mark.parametrize("fixture_name", ["fixtureA_sigma.json", "fixtureB_sigma.json"])
+FIXTURES = ["fixtureA_sigma.json", "fixtureB_sigma.json", "fixtureC_sigma.json"]
+
+
+@pytest.mark.parametrize("fixture_name", FIXTURES)
 def test_sigma_osi_sigma_roundtrip_through_yaml_serialization(fixture_name):
     spec = load_fixture(fixture_name)
 
@@ -41,7 +44,7 @@ def test_sigma_osi_sigma_roundtrip_through_yaml_serialization(fixture_name):
     assert normalize(reconstructed_spec) == normalize(spec)
 
 
-@pytest.mark.parametrize("fixture_name", ["fixtureA_sigma.json", "fixtureB_sigma.json"])
+@pytest.mark.parametrize("fixture_name", FIXTURES)
 def test_osi_sigma_osi_roundtrip_preserves_portable_fields(fixture_name):
     """Sigma -> Ossie -> Sigma -> Ossie: the second Ossie document's portable
     (non-custom_extensions) content must match the first, even though the Sigma

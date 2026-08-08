@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import pytest
 from ossie import OSIDialect
 
 from ossie_sigma.converter_issues import ConverterIssueType
@@ -39,9 +40,13 @@ def test_basic_datasets_fields_relationships_metrics():
     is_closed = next(f for f in orders.fields if f.name == "Is Closed")
     dialects = {d.dialect: d.expression for d in is_closed.expression.dialects}
     assert dialects[OSIDialect.SIGMA] == 'If([Status] = "closed", 1, 0)'
-    assert dialects[OSIDialect.ANSI_SQL] == "CASE WHEN (\"Status\" = 'closed') THEN 1 ELSE 0 END"
+    assert dialects[OSIDialect.ANSI_SQL] == "CASE WHEN \"Status\" = 'closed' THEN 1 ELSE 0 END"
 
-    assert {m.name for m in model.metrics} == {"Total Amount", "Order Count"}
+    assert model.description == "Orders and the customers who placed them"
+    assert {m.name for m in model.metrics} == {"Total Amount", "Order Count", "metricUnnamed"}
+    total_amount = next(m for m in model.metrics if m.name == "Total Amount")
+    assert total_amount.description == "Gross amount across all orders"
+
     assert len(model.relationships) == 1
     rel = model.relationships[0]
     assert rel.from_dataset == "Orders"
@@ -50,16 +55,42 @@ def test_basic_datasets_fields_relationships_metrics():
     assert rel.to_columns == ["Customer ID"]
 
 
-def test_control_element_preserved_but_not_modeled():
+def test_unique_keys_map_to_the_portable_primary_key():
     spec = load_fixture("fixtureA_sigma.json")
+    model = SigmaToOSIConverter().convert(spec).output.semantic_model[0]
+
+    orders = next(d for d in model.datasets if d.name == "Orders")
+    assert orders.primary_key == ["Order ID"]
+
+
+def test_non_table_element_kinds_are_preserved_but_not_modeled():
+    spec = load_fixture("fixtureC_sigma.json")
     result = SigmaToOSIConverter().convert(spec)
     model = result.output.semantic_model[0]
 
-    dataset_names = {d.name for d in model.datasets}
-    assert "Order-Date" not in dataset_names  # controls are never modeled as datasets
+    assert {d.name for d in model.datasets} == {"Basic"}  # never modeled as a dataset
 
     issue_types = {i.issue_type for i in result.issues}
-    assert ConverterIssueType.CONTROL_ELEMENT_NOT_MODELED in issue_types
+    assert ConverterIssueType.UNSUPPORTED_ELEMENT_KIND in issue_types
+
+
+def test_unmapped_spec_keys_survive_as_native_residue():
+    """A future schemaVersion field this converter has never heard of must still
+    round-trip, rather than being silently dropped."""
+    import json
+
+    spec = load_fixture("fixtureC_sigma.json")
+    model = SigmaToOSIConverter().convert(spec).output.semantic_model[0]
+
+    basic = next(d for d in model.datasets if d.name == "Basic")
+    dataset_ext = json.loads(basic.custom_extensions[0].data)
+    assert dataset_ext["native"]["someFutureElementKey"] == ["not", "yet", "modeled"]
+
+    field_ext = json.loads(basic.fields[0].custom_extensions[0].data)
+    assert field_ext["native"]["someFutureColumnKey"] == {"a": 1}
+
+    model_ext = json.loads(model.custom_extensions[0].data)
+    assert model_ext["native"]["someFutureTopLevelKey"] == {"round": "trips"}
 
 
 def test_relationship_resolves_inode_style_physical_column_refs():
@@ -67,9 +98,54 @@ def test_relationship_resolves_inode_style_physical_column_refs():
     result = SigmaToOSIConverter().convert(spec)
     model = result.output.semantic_model[0]
 
-    rel = next(r for r in model.relationships if r.name == "Org And User")
+    rel = next(r for r in model.relationships if r.name == "relEventsToOrgUser")
     assert rel.from_columns == ["Org ID", "User ID"]
     assert rel.to_columns == ["ORGANIZATION_UUID", "USER_UUID"]
+
+
+@pytest.mark.parametrize(
+    ("element_name", "expected_source"),
+    [
+        ("Active Events", "table:elemEvents"),
+        ("Daily Revenue", "sql:conn-2"),
+        ("Shared Dimension", "data-model:11111111-1111-1111-1111-111111111111/elemCustomers"),
+        ("Events With Orgs", "join:elemJoined"),
+        ("All Events", "union:elemUnioned"),
+    ],
+)
+def test_every_non_warehouse_source_kind_gets_a_marker_and_an_issue(element_name, expected_source):
+    spec = load_fixture("fixtureB_sigma.json")
+    result = SigmaToOSIConverter().convert(spec)
+    model = result.output.semantic_model[0]
+
+    dataset = next(d for d in model.datasets if d.name == element_name)
+    assert dataset.source == expected_source
+    assert any(
+        i.issue_type is ConverterIssueType.DERIVED_ELEMENT_NOT_MODELED and i.element_name == element_name
+        for i in result.issues
+    )
+
+
+def test_all_filter_kinds_are_preserved_with_an_issue():
+    import json
+
+    spec = load_fixture("fixtureB_sigma.json")
+    result = SigmaToOSIConverter().convert(spec)
+    model = result.output.semantic_model[0]
+
+    events = next(d for d in model.datasets if d.name == "Events")
+    filters = json.loads(events.custom_extensions[0].data)["native"]["filters"]
+    assert {f["kind"] for f in filters} == {
+        "number-range",
+        "date-range",
+        "top-n",
+        "list",
+        "text-match",
+        "hierarchy",
+    }
+
+    issue_types = {i.issue_type for i in result.issues}
+    assert ConverterIssueType.FILTER_NOT_MODELED in issue_types
 
 
 def test_opaque_datatype_for_unrecognized_format():
@@ -105,7 +181,7 @@ def test_derived_element_preserved_with_issue():
     model = result.output.semantic_model[0]
 
     active_events = next(d for d in model.datasets if d.name == "Active Events")
-    assert active_events.source == "element:elemEvents"
+    assert active_events.description == "Derived view layered on Events, not a direct warehouse table"
 
     issue_types = {i.issue_type for i in result.issues}
     assert ConverterIssueType.DERIVED_ELEMENT_NOT_MODELED in issue_types

@@ -101,25 +101,31 @@ Path("data_model.json").write_text(json.dumps(result.output, indent=2))
 
 | Sigma concept | Ossie concept | Notes |
 |---|---|---|
-| Data model (`name`, `description`) | `OSISemanticModel` | `dataModelId`, `folderId`, `documentVersion` preserved in `custom_extensions` |
-| Page | *(none)* | Ossie has no page/folder-of-elements concept; page membership is preserved per-dataset in `custom_extensions` so it can be reconstructed on export |
-| Element (`kind: table`) | `OSIDataset` | `source` = warehouse path joined with `.`; `connectionId` preserved in `custom_extensions` |
-| Element (`kind: control`) | *not modeled* | See [Limitations](#limitations) — the entire native control element is preserved verbatim in a model-level `custom_extensions` entry so `osi-to-sigma` can restore it unchanged |
+| Data model (`name`, `description`) | `OSISemanticModel` | `dataModelId`, `folderId`, `documentVersion`, `schemaVersion` preserved in `custom_extensions` |
+| Page | *(none)* | Ossie has no page/folder-of-elements concept, but `pages` is a required part of the spec, so page membership is preserved per-dataset in `custom_extensions` and rebuilt on export |
+| Element (`kind: table`) | `OSIDataset` | `source` = warehouse path joined with `.` for `warehouse-table`; the other five source kinds get a marker plus the native `source` block in `custom_extensions` |
+| Element (any other `kind`) | *not modeled* | Preserved verbatim in a model-level `custom_extensions` entry so `osi-to-sigma` restores it unchanged |
 | Column (`formula`) | `OSIField.expression` | See [Expression translation](#expression-translation) |
+| Element `uniqueKeys` | `OSIDataset.primary_key` | Column ids resolved to field names in both directions |
 | Element `metrics[]` | `OSIMetric` | Promoted to model level (Ossie metrics are not dataset-scoped); the formula is re-qualified with the owning dataset name |
 | `relationships[]` (join keys) | `OSIRelationship` | See [Relationship resolution](#relationship-resolution) |
 | Column/element/relationship native `id` | *(preserved, not surfaced)* | Stashed in `custom_extensions` (`vendor_name: SIGMA`) so re-export can reuse Sigma's own stable ids rather than minting new ones — see [Stable ids](#stable-ids) |
-| Unmapped/unknown column format | `datatype: Opaque` | Only used when Sigma's column format has no portable equivalent; the original Sigma format is preserved in `custom_extensions` |
+| Column `format` | `datatype` (coarse) + `custom_extensions` | Sigma has no column datatype, only a display format with two kinds (`number`, `date`); anything else becomes `Opaque`. The native format object is always preserved |
+| `filters`, `folders`, `order`, `sort`, `summary`, `groupings`, `columnSecurities`, `visibleAsSource`, `hidden`, metric `timeline`/`isHighlighted`/`format`, `relationshipType` | *not modeled* | Presentation/governance state with no Ossie equivalent, preserved verbatim under a `native` key in `custom_extensions`. Captured by subtraction, so fields added by a future `schemaVersion` round-trip too |
 
 ### Expression translation
 
-Sigma column and metric formulas (e.g. `Sum([Orders/Amount])`, `If([Status] = "closed", 1, 0)`)
-are parsed by a small recursive-descent parser (`ossie_sigma.sigma_formula`) into an AST, which is
-then rendered to ANSI SQL wherever a faithful translation exists (see the module docstring for the
-full function/operator coverage table). This is deliberately conservative: a formula that uses a
-Sigma function or operator with no portable SQL meaning (e.g. table calculations like `RunningSum`,
-which depend on UI-configured partition/order context that is not passed as a formula argument) is
-**not** translated.
+Sigma's formula language is not SQL, so `ossie_sigma.sigma_formula` tokenizes and parses formulas
+like `Sum([Orders/Amount])` or `If([Status] = "closed", 1, 0)` with a recursive-descent parser.
+From there it does what the SQL-native converters in this repo do: it builds a **sqlglot expression
+tree** and lets sqlglot's generator emit the SQL, so identifier quoting, string escaping, and
+operator precedence are the library's job, and targeting a warehouse dialect instead of ANSI is a
+`dialect=` argument rather than a second renderer. The reverse direction walks a sqlglot tree back
+into formula text, so both directions share one intermediate representation.
+
+Translation is deliberately conservative: a formula using a construct with no portable SQL meaning
+(e.g. table calculations like `RunningSum`, whose partition/order context comes from UI
+configuration rather than from a formula argument) is **not** translated.
 
 Every `OSIExpression` produced by `sigma-to-osi` always carries **both**:
 
@@ -128,12 +134,12 @@ Every `OSIExpression` produced by `sigma-to-osi` always carries **both**:
 2. An `ANSI_SQL`-dialect entry, present only when the formula translated successfully.
 
 `osi-to-sigma` prefers the `SIGMA` dialect entry when present (perfect fidelity for anything that
-came from Sigma); for expressions authored by another tool (no `SIGMA` dialect entry), it falls
-back to translating the `ANSI_SQL` entry back into Sigma formula syntax, using the same function
-table in reverse. If neither direction is possible, the expression is preserved as an opaque
-Sigma formula-language string comment plus the raw SQL, and the field is flagged in
-`ConverterResult.issues` (`ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE`) rather than silently
-producing an invalid Sigma formula.
+came from Sigma); for expressions authored by another tool it falls back to translating the
+`ANSI_SQL` entry back into Sigma formula syntax. If neither is possible, the column or metric is
+**omitted** and flagged in `ConverterResult.issues`
+(`ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE`). `formula` is a required property and the data
+model API validates the whole document before applying any of it, so emitting a placeholder would
+fail the entire upload rather than degrade one field.
 
 ### Relationship resolution
 
@@ -164,8 +170,7 @@ for objects that originate purely in Ossie and have never been round-tripped thr
 ## Limitations
 
 See [`LIMITATIONS.md`](LIMITATIONS.md) for a full accounting of what this converter does not (yet)
-handle faithfully, why, and what the general-purpose OSI-native alternative would be instead of a
-Sigma-specific workaround.
+handle faithfully and why.
 
 ## Development
 

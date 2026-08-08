@@ -18,10 +18,19 @@
 from pathlib import Path
 
 import yaml
-from ossie import OSIDocument
+from ossie import (
+    OSIDataset,
+    OSIDialect,
+    OSIDialectExpression,
+    OSIDocument,
+    OSIExpression,
+    OSIField,
+    OSIMetric,
+    OSISemanticModel,
+)
 
 from ossie_sigma.converter_issues import ConverterIssueType
-from ossie_sigma.osi_to_sigma import OSIToSigmaConverter
+from ossie_sigma.osi_to_sigma import OSIToSigmaConverter, _stable_id
 from ossie_sigma.sigma_to_osi import SigmaToOSIConverter
 
 from .helpers import load_fixture, normalize
@@ -79,3 +88,142 @@ def test_ids_are_deterministic_across_repeated_conversions():
     spec_1 = OSIToSigmaConverter().convert(document).output
     spec_2 = OSIToSigmaConverter().convert(document).output
     assert normalize(spec_1) == normalize(spec_2)
+
+
+def test_synthesized_ids_are_stable_across_processes():
+    """uuid5 over a fixed namespace, not hash()/uuid4 — a re-export that minted new ids
+    would silently orphan every Sigma object referencing the old ones, so this pins the
+    exact values rather than only asserting two in-process runs agree (PYTHONHASHSEED
+    randomization would not show up in a same-process comparison)."""
+    assert _stable_id("element", "store_sales") == "83ae98f0bda0511baf98cd58fd394974"
+    assert _stable_id("column", "store_sales", "ss_sold_date_sk") == "48b667ffa9535d08bcc1d0a48b878a99"
+    assert _stable_id("metric", "store_sales", "total_sales") == "9d4cc3056b0c5c698664c4803f12dd72"
+
+
+def test_untranslatable_expression_omits_the_column_instead_of_faking_a_formula():
+    """`formula` is required on every Sigma column and the data model API validates the
+    whole document before applying any of it, so a placeholder would fail the entire
+    upload rather than degrade one column."""
+    document = OSIDocument(
+        semantic_model=[
+            OSISemanticModel(
+                name="m",
+                datasets=[
+                    OSIDataset(
+                        name="orders",
+                        source="db.public.orders",
+                        fields=[
+                            OSIField(
+                                name="ok",
+                                expression=OSIExpression(
+                                    dialects=[OSIDialectExpression(dialect=OSIDialect.ANSI_SQL, expression="amount")]
+                                ),
+                            ),
+                            OSIField(
+                                name="untranslatable",
+                                expression=OSIExpression(
+                                    dialects=[
+                                        OSIDialectExpression(
+                                            dialect=OSIDialect.ANSI_SQL,
+                                            expression="SUM(amount) OVER (PARTITION BY region)",
+                                        )
+                                    ]
+                                ),
+                            ),
+                            OSIField(
+                                name="no_usable_dialect",
+                                expression=OSIExpression(
+                                    dialects=[OSIDialectExpression(dialect=OSIDialect.MDX, expression="[Measures].[X]")]
+                                ),
+                            ),
+                        ],
+                    )
+                ],
+                metrics=[
+                    OSIMetric(
+                        name="untranslatable_metric",
+                        expression=OSIExpression(
+                            dialects=[
+                                OSIDialectExpression(
+                                    dialect=OSIDialect.ANSI_SQL,
+                                    expression="SUM(orders.amount) OVER (PARTITION BY orders.region)",
+                                )
+                            ]
+                        ),
+                    )
+                ],
+            )
+        ]
+    )
+
+    result = OSIToSigmaConverter().convert(document)
+    element = result.output["pages"][0]["elements"][0]
+
+    assert [c["name"] for c in element["columns"]] == ["ok"]
+    assert not element.get("metrics")
+    assert all(c.get("formula") for c in element["columns"])
+    assert (
+        sum(1 for i in result.issues if i.issue_type is ConverterIssueType.EXPRESSION_NOT_TRANSLATABLE) == 3
+    )
+
+
+def test_synthesized_spec_carries_a_schema_version():
+    """`schemaVersion` is required by the create/update endpoints."""
+    document = OSIDocument.model_validate(
+        yaml.safe_load((EXAMPLES_DIR / "tpcds_semantic_model.yaml").read_text())
+    )
+    assert OSIToSigmaConverter().convert(document).output["schemaVersion"] == 1
+
+
+def test_datatypes_only_ever_emit_the_two_documented_format_kinds():
+    document = OSIDocument(
+        semantic_model=[
+            OSISemanticModel(
+                name="m",
+                datasets=[
+                    OSIDataset(
+                        name="t",
+                        source="db.public.t",
+                        fields=[
+                            OSIField(
+                                name=datatype.lower(),
+                                datatype=datatype,
+                                expression=OSIExpression(
+                                    dialects=[
+                                        OSIDialectExpression(
+                                            dialect=OSIDialect.ANSI_SQL, expression=datatype.lower()
+                                        )
+                                    ]
+                                ),
+                            )
+                            for datatype in (
+                                "String",
+                                "Integer",
+                                "Decimal",
+                                "Float",
+                                "Boolean",
+                                "Date",
+                                "Time",
+                                "DateTime",
+                                "DateTimeTz",
+                            )
+                        ],
+                    )
+                ],
+            )
+        ]
+    )
+
+    columns = OSIToSigmaConverter().convert(document).output["pages"][0]["elements"][0]["columns"]
+    kinds = {c["formula"].strip("[]"): c["format"]["kind"] for c in columns if "format" in c}
+    assert kinds == {
+        "integer": "number",
+        "decimal": "number",
+        "float": "number",
+        "date": "date",
+        "datetime": "date",
+        "datetimetz": "date",
+    }
+    # String/Boolean/Time have no Sigma display format; emitting an invented `kind`
+    # would be rejected by the data model API for the whole document.
+    assert {c["formula"].strip("[]") for c in columns if "format" not in c} == {"string", "boolean", "time"}

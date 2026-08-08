@@ -17,316 +17,148 @@
   under the License.
 -->
 
-# Limitations, design tradeoffs, and testing strategy
+# Limitations and design tradeoffs
 
-This document is a deliberately honest accounting of what `converters/sigma` does not
-(yet) handle faithfully, why, and what a general-purpose fix would look like versus a
-Sigma-specific workaround. It also documents how the converter is tested and gives an
-assessment of how this contribution is likely to be received upstream.
+What `converters/sigma` does not map onto a portable Ossie concept, and why. Every
+item here is reported at runtime as a `ConverterIssue`, never dropped silently.
 
-## 1. Controls and workbook-level filters are not modeled
+## Presentation and governance state is preserved, not modeled
 
-Sigma data models can contain `kind: control` elements (date-range pickers, dropdown
-filters, etc.) that other parts of a workbook reference. A control has no analog in
-the OSI core spec — it isn't a dataset, field, relationship, or metric; it's a
-*presentation-layer* input that a downstream Sigma workbook wires to one or more
-columns via `filters: [{columnId, source: {elementId}}]`.
+A Sigma table element carries `filters`, `folders`, `order`, `sort`, `summary`,
+`groupings`, `columnSecurities`, `visibleAsSource`, per-column `hidden`, and per-metric
+`isHighlighted`/`format`/`timeline`. None of these describe the *shape* of a semantic
+model — they describe how Sigma displays it and who may see it — and Ossie has no
+equivalent for any of them.
 
-**What this converter does:** preserves every control element verbatim, byte-for-byte,
-in a model-level `custom_extensions` entry (`vendor_name: SIGMA`, keyed under
-`non_table_elements`, alongside the page it lived on). `osi-to-sigma` restores it
-unchanged. A `ConverterIssue(CONTROL_ELEMENT_NOT_MODELED)` is always recorded so
-callers know a control was round-tripped opaquely rather than actually converted.
+All of it is preserved verbatim under a `native` key in the owning object's
+`custom_extensions` (`vendor_name: SIGMA`) and restored unchanged on export, matching
+how the Databricks, Omni, and Orion Belt converters handle vendor-only features. The
+residue is captured **by subtraction** — everything the converter does not explicitly
+map — so a future `schemaVersion` that adds fields still round-trips rather than
+silently losing them. Element `filters` additionally raise `FILTER_NOT_MODELED`.
 
-**Why not model it in OSI:** a control is fundamentally about Sigma's own UI
-(what widget renders, what workbook pages it applies to) — projecting it into the
-portable spec would mean adding Sigma-specific concepts to a vendor-neutral format,
-which runs against the stated purpose of OSI ("the general spirit of Open Semantic
-Interchange should be maintained rather than hacking Sigma-specific functionality").
-The same reasoning applies to Sigma's **named/static element filters**
-(`element.filters[]`, distinct from control filters) — these are preserved verbatim in
-each dataset's `custom_extensions` with a `FILTER_NOT_MODELED` issue, for the same
-reason.
+## Only `kind: table` elements are modeled
 
-**What a real fix looks like:** this is a job for a **Sigma-specific API layer above
-the converter**, not the converter itself — e.g. a small adapter that, after an
-`osi-to-sigma` conversion, re-applies any previously-captured controls/filters via
-Sigma's own workbook/control API calls (which this converter does not call — it only
-produces/consumes the data model spec document). That adapter is legitimately
-Sigma-specific glue code and does not belong in a hub-and-spoke OSI converter.
+The data model spec defines table elements; the API docs list input tables, Python
+elements, UI elements, and custom functions as unsupported programmatically. Any
+element with another `kind` is preserved verbatim at the model level under
+`non_table_elements` with an `UNSUPPORTED_ELEMENT_KIND` issue. This is a defensive
+path, not an expected one.
 
-## 2. Calculated fields on tables: included, deliberately
+## Non-warehouse-table sources have no `OSIDataset.source`
 
-Sigma lets every table element define calculated columns (formulas referencing other
-columns on the same element) alongside physical passthrough columns. This converter
-maps **all** of them — physical and calculated alike — to `OSIField`, using the same
-disambiguation OSI already has for any dataset: an `OSIField.expression` is *just an
-expression*, whether it happens to be `[TABLE/COL]` (a passthrough) or
-`If([Status] = "closed", 1, 0)` (a calculation). There's no reason to exclude
-calculated fields from a dataset's `fields[]` — the OSI core spec draws no such
-distinction, and doing so would need an invented Sigma-only concept ("calculated vs.
-physical field") that has no home in the core spec. Sigma's *metrics* (element-scoped
-aggregate formulas) are a different, real distinction — the core spec already has a
-separate `OSIMetric` concept for exactly this, and Sigma's metrics map onto it (see
-§4 for the promotion nuance).
+`source.kind` may be `warehouse-table`, `sql`, `table`, `data-model`, `join`, or
+`union`. Only the first is a `database.schema.table` location, which is what
+`OSIDataset.source` is defined to hold. The other five get a readable marker
+(`sql:<connectionId>`, `join:<elementId>`, ...) plus a `DERIVED_ELEMENT_NOT_MODELED`
+issue; the full native `source` block lives in `custom_extensions`, so export
+reproduces it exactly. An Ossie document that never came from Sigma can only ever
+produce a `warehouse-table` source, since that is all a location string implies.
 
-## 3. Stable ids: preserved-by-default, synthesized-as-fallback
+## Join keys use two addressing schemes
 
-Sigma element, column, and relationship ids are load-bearing — other objects
-(controls, other data models' relationships/materializations, deployment policies)
-reference them by id, so an export that minted new ids for previously-existing objects
-would silently break those references on re-import.
+Sigma addresses a relationship key either by the element's own column id or by a raw
+`inode-<file>/<PHYSICAL_COLUMN>` reference straight to the warehouse column, bypassing
+the modeled column list. The converter resolves both to a modeled field name where it
+can, records `RELATIONSHIP_COLUMN_UNRESOLVED` where it cannot, and **always** keeps the
+raw `keys` in `custom_extensions`, so Sigma → Ossie → Sigma is exact either way.
 
-**What this converter does:** never invents an id for anything that already has one.
-Every id-bearing Sigma object's native id is preserved verbatim inside that object's
-`custom_extensions` (e.g. `{"id": "colOrderId", ...}` on the corresponding `OSIField`),
-and `osi-to-sigma` reuses it unchanged. Ids are synthesized — as a deterministic
-`uuid5` of a fixed namespace plus the object's dataset/field path — **only** for
-objects with no preserved Sigma id, i.e. ones that originate purely in an Ossie
-document that was never round-tripped through Sigma. This makes `osi-to-sigma`
-deterministic and idempotent (verified by `test_ids_are_deterministic_across_repeated_conversions`),
-but a synthesized id is *not* a real Sigma id in the sense of being pre-registered
-with Sigma's backend — the first time such a document is actually loaded into Sigma
-(via `sigcli data-models spec create`), Sigma's own API, not this converter, is the
-source of truth for whether that id is accepted.
+Unsolved: a document authored by another tool has no raw keys to fall back on, so
+export must synthesize key ids from field names. That works when every joined field is
+a modeled column, but cannot recreate a key pointing at a physical column the element
+never redefined.
 
-## 4. Relationship (join) resolution has a real, documented gap
+## Formula coverage is bounded by what Sigma puts in the formula
 
-Sigma relationships address join-key columns in **two different ways** within the
-same `keys[]` array: either by the owning element's own column id, or by a raw
-`inode-<file>/<PHYSICAL_COLUMN_NAME>` reference straight to the underlying warehouse
-table/column — bypassing the element's modeled column list entirely. (This second
-form shows up whenever a relationship key is a physical column that was never
-explicitly redefined as one of the element's own `columns[]` entries.)
+`ossie_sigma.sigma_formula` parses Sigma's formula language and translates it through a
+sqlglot expression tree, covering nested calls, all operators, literals, and ~30
+functions across aggregation, conditional, string, and date categories.
 
-**What this converter does:** resolves both forms to a modeled Ossie field name where
-possible (matching the physical column name against each element's own column
-formulas), and **always preserves the raw, unresolved `sourceColumnId`/
-`targetColumnId` values in the relationship's `custom_extensions`** regardless of
-whether resolution succeeded. This means round-trip fidelity (Sigma → OSI → Sigma) is
-guaranteed even when the human-readable `from_columns`/`to_columns` names in the OSI
-document are only best-effort. When resolution fails, a
-`RELATIONSHIP_COLUMN_UNRESOLVED` issue is recorded rather than silently guessing.
+Table calculations (`RunningSum`, `Rank`, `Lag`, ...) resolve their partition/order
+context from UI configuration rather than from arguments, so nothing in the formula
+string can produce correct SQL. These are reported `EXPRESSION_NOT_TRANSLATABLE` and
+carry a `SIGMA` dialect entry only. Every formula, translatable or not, is preserved
+verbatim in that `SIGMA` entry, so nothing is ever lost on the way in.
 
-**What's genuinely unsolved:** an Ossie document authored by a *different* tool
-(e.g. hand-written, or round-tripped through dbt) that gets converted to Sigma has no
-such raw reference to fall back on — `osi-to-sigma` must synthesize
-`sourceColumnId`/`targetColumnId` values from the field names alone, via each
-element's own modeled columns. This works correctly as long as every joined field
-exists as a named column, but Sigma's implicit "every warehouse column is
-automatically a column, even a hidden/undefined one" behavior means there could be
-edge cases (a foreign-tool document referencing a physical column that was deliberately
-never redefined) this converter cannot correctly recreate without more information
-than the OSI document contains. This is inherent to Sigma's addressing scheme, not
-fixable purely within the converter.
+Because the intermediate representation is a sqlglot tree rather than SQL text,
+emitting a warehouse dialect instead of ANSI is a `dialect=` argument
+(`sigma_formula.to_sql`). The converter currently emits `ANSI_SQL` only: Sigma formulas
+are warehouse-agnostic, so the spec gives no signal about which vendor dialect would be
+more useful, and the table-calculation gap above is unaffected either way.
 
-## 5. Derived ("child") elements and custom SQL elements
+## Untranslatable expressions are omitted on export, not approximated
 
-A Sigma element's `source.kind` can be `warehouse-table` (a physical table) or
-something else (e.g. `table`, meaning the element is layered on another element
-rather than a warehouse table directly). This converter still creates an `OSIDataset`
-for a derived element — with `source` set to a synthetic `element:<parent-id>`
-marker rather than a `database.schema.table` string — and flags it with
-`DERIVED_ELEMENT_NOT_MODELED`, since OSI's `OSIDataset.source` field is documented as
-a physical location string and has no first-class "this dataset is derived from
-another dataset" relationship concept. The parent element id is preserved in
-`custom_extensions` so `osi-to-sigma` reconstructs the exact original `source` block.
+`formula` is required on every Sigma column and metric, and the data model API
+validates the whole document before applying any of it — so one placeholder formula
+fails the entire upload, not one field. When neither a `SIGMA` dialect entry nor a
+translatable `ANSI_SQL` one is available, the column or metric is **omitted** with an
+`EXPRESSION_NOT_TRANSLATABLE` issue naming it.
 
-Sigma workbooks can also define **custom SQL elements** (a table backed by a
-hand-written SQL query rather than a warehouse table reference or a data-model
-formula). This converter has not been exercised against that element shape — Sigma's
-public data-model spec endpoint was not observed producing one in the data models
-inspected during development. If Sigma represents a custom-SQL element with a
-`source.kind` other than the two handled here, it will currently be treated like any
-other non-`warehouse-table` source (preserved as a derived element with a
-`DERIVED_ELEMENT_NOT_MODELED` issue) rather than mapped to something more precise —
-this is a gap to close with real fixture data from a workbook that uses one.
+## Cross-dataset metrics have no Sigma equivalent
 
-## 6. Formula language coverage: real but intentionally bounded
+A Sigma metric is scoped to exactly one element; an `OSIMetric` is model-level and may
+span datasets via relationships. Sigma → Ossie always promotes cleanly (the owning
+`element_id` is preserved). Ossie → Sigma places a metric by its preserved
+`element_id`, or, failing that, by the single dataset its ANSI SQL unambiguously
+qualifies. A metric that references several datasets or none is dropped with
+`CROSS_DATASET_METRIC_DROPPED`.
 
-`ossie_sigma.sigma_formula` implements a genuine tokenizer, recursive-descent parser,
-and bidirectional ANSI SQL renderer (not a regex classifier) supporting: nested
-function calls at arbitrary depth, all comparison/logical/arithmetic operators,
-string/number/boolean literals, and roughly 30 Sigma functions across aggregation,
-conditional, string, and date categories (see the module docstring and
-`core-spec/expression_language.md`'s Sigma column in the Cross-Reference Tool
-Mappings tables for the full list).
+## Column formats carry only a coarse datatype
 
-**Deliberately out of scope:** Sigma's *table calculation* functions (`RowNumber`,
-`Rank`, `RunningSum`, `RunningAvg`, `Lag`, `Lead`, etc.) resolve their partition/order
-context from **UI configuration** (which pivot table or chart the calculation is
-attached to), not from arguments passed in the formula text. There is no way to
-recover that context from the formula string alone, so these are correctly identified
-as untranslatable — the original Sigma formula is preserved in the `SIGMA` dialect,
-but no `ANSI_SQL` dialect entry is produced. This is not a parser limitation; it's a
-structural fact about where Sigma stores that information (outside the formula).
+The spec has no column datatype — only a display `format`, with two documented kinds,
+`number` and `date`. So Sigma → Ossie can infer no more than `Decimal`/`DateTime`, any
+other kind becomes `Opaque` (`OPAQUE_DATATYPE`), and a column with no format correctly
+gets no `datatype` at all. Ossie → Sigma emits only those two kinds; `String`,
+`Boolean`, `Time`, and `Opaque` produce no `format` key, because an invented `kind`
+would be rejected for the whole document. The full native format object is always
+preserved, so display detail (`formatString`, `currencySymbol`, ...) survives.
 
-**Every formula, translatable or not, is never lost:** the `SIGMA` dialect entry
-always carries the original text verbatim, so nothing is silently dropped —
-untranslatable formulas simply don't get a second, `ANSI_SQL`-dialect representation.
+## Synthesized ids
 
-## 7. Maximizing ANSI SQL vs. vendor-specific dialects
+Sigma element/column/relationship ids are load-bearing — controls, other data models,
+and materializations reference them — so the converter never invents an id for an
+object that has one. Native ids ride in `custom_extensions` and are reused verbatim.
+Objects originating outside Sigma get a `uuid5` of a fixed namespace plus their
+dataset/field path: deterministic across runs, processes, and machines (pinned by
+`test_synthesized_ids_are_stable_across_processes`), but not pre-registered with
+Sigma's backend.
 
-Per the "maximum set of expressions representable as ANSI SQL" goal, the current
-implementation targets `ANSI_SQL` only (no Snowflake/Databricks/BigQuery-specific
-translation) because Sigma data models are themselves warehouse-agnostic — a formula
-like `Sum([Amount])` means the same thing regardless of which connection the element
-points to, so there is no Sigma-side signal indicating which vendor SQL dialect would
-be more useful to target. A natural follow-up (out of scope for this PR) would be: for
-formulas this converter can't express in ANSI SQL, check the target connection's
-warehouse type (Snowflake, BigQuery, Databricks — available on the connection, not
-surfaced in the data model spec used here) and add a vendor-specific `OSIDialect`
-entry using that warehouse's native date/window function syntax, which would recover
-some of the table-calculation functions in §6 for warehouses with native window
-function support (though the partition/order-context problem remains — Sigma still
-doesn't hand that information to the formula).
+## One semantic model per document
 
-## 8. Cross-dataset ("model-level") metrics have no Sigma equivalent
+Sigma data models are single models; `OSIDocument.semantic_model` is a list. Only
+`semantic_model[0]` is converted, with `EXTRA_MODEL_DROPPED` naming how many were
+dropped.
 
-A Sigma metric (`element.metrics[]`) is always scoped to exactly one element. An OSI
-`OSIMetric`, by contrast, lives at the model level and may reference multiple
-datasets via relationships (e.g. a ratio metric like
-`SUM(store_sales.ss_ext_sales_price) / COUNT(DISTINCT customer.c_customer_sk)`).
+## How this is tested
 
-**Sigma → OSI:** every Sigma metric promotes cleanly to an `OSIMetric`, re-qualified
-with its owning element's name, with `element_id` preserved in `custom_extensions`
-for exact placement on the way back.
+- **Formula unit tests** — every supported function and operator in both directions,
+  plus operator-precedence, quote-escaping, untranslatable, and unparseable cases.
+- **Three fixtures**, covering the spec surface documented for the data model
+  endpoints: `fixtureA` (warehouse tables, folders/order/summary/sort, `uniqueKeys`,
+  `columnSecurities`, both format kinds with full display detail, metric
+  `timeline`/`isHighlighted`, `relationshipType`, hidden and unnamed objects);
+  `fixtureB` (all six filter kinds, all five non-warehouse source kinds, composite
+  relationship mixing both key addressing schemes, `groupings`, unrecognized format,
+  untranslatable table calculation); `fixtureC` (unknown element kind and unknown
+  element/column keys, i.e. forward compatibility).
+- **Round-trip tests** — all three fixtures survive Sigma → Ossie → Sigma structurally
+  byte-for-byte, including through the CLI's YAML boundary, and Sigma → Ossie → Sigma →
+  Ossie preserves all portable content.
+- **Foreign-origin coverage** — the reverse converter runs against
+  `examples/tpcds_semantic_model.yaml`, a document that never touched Sigma, checking
+  synthesized ids, SQL-to-formula translation, metric placement, and dropped
+  cross-dataset metrics.
 
-**OSI → Sigma:** for a metric with a preserved `element_id` (round-tripped from
-Sigma), placement is exact. For a metric with no such extension (authored elsewhere),
-the converter inspects the `ANSI_SQL` expression's column qualifiers and attaches the
-metric to the single dataset it unambiguously references — but if the expression
-spans more than one dataset (or none), there is **no faithful Sigma representation**,
-and the metric is dropped with a `CROSS_DATASET_METRIC_DROPPED` issue rather than
-silently attached to an arbitrary dataset or silently discarded without a trace. This
-is exercised directly by `test_osi_to_sigma.py::test_foreign_origin_document_synthesizes_valid_spec`
-against `examples/tpcds_semantic_model.yaml`, which contains exactly this kind of
-metric (`customer_lifetime_value`, `store_productivity`).
+Not covered: a fixture from a real production data model. The fixtures are synthetic by
+choice, to avoid embedding any organization's schema in an ASF repository.
 
-## 9. `Opaque` and `custom_extensions` usage discipline
+## Fixes bundled with this change
 
-- `datatype: Opaque` is used **only** when a Sigma column's `format.kind` has no
-  portable Ossie equivalent (observed example: `variant`) — never as a default or
-  fallback for "we didn't bother mapping this." Most Sigma columns carry no `format`
-  at all in the data models this converter was developed against, and those fields
-  correctly get no `datatype` at all (per the core spec: "omit `datatype` when the
-  type is unknown or unspecified"), not `Opaque`.
-- Every `custom_extensions` entry this converter writes carries only the minimum
-  Sigma-specific data needed for round-trip fidelity (native id, page placement,
-  folder/order UI grouping, raw relationship keys, unrecognized column format) — it
-  is never used as a dumping ground for data that has a proper OSI home (e.g. a
-  column's description goes in `OSIField.description`, not `custom_extensions`).
-- The one intentional exception is `non_table_elements` (control/unknown-kind
-  elements) at the model level, and the full `folders`/`order` UI-grouping metadata
-  per dataset — both are genuinely presentation-layer Sigma concepts with no OSI
-  equivalent (see §1), so `custom_extensions` is the correct (and only) home for
-  them, not a workaround for something OSI should have modeled instead.
+Both were pre-existing gaps found while validating output, and block any converter, not
+just this one:
 
-## 10. Multiple semantic models per document
-
-Sigma data models are always a single model; `OSIDocument.semantic_model` is a list.
-If given a multi-model Ossie document, only `semantic_model[0]` is converted, and a
-`ConverterIssue` is recorded naming how many additional models were dropped, rather
-than silently ignoring them or guessing which one the caller meant.
-
-## How this converter is tested
-
-- **Unit tests** (`tests/test_sigma_formula.py`) exercise the formula parser/renderer
-  directly: every supported function/operator in both directions, plus the
-  untranslatable and unparseable cases, independent of the surrounding converter.
-- **Fixture-driven directional tests** (`tests/test_sigma_to_osi.py`,
-  `tests/test_osi_to_sigma.py`) use two hand-authored, synthetic (non-proprietary)
-  Sigma data model fixtures:
-  - `fixtureA_sigma.json` — the common path: two related tables, a composite-free
-    relationship, model-level metrics, nested calculated-field formulas, and a
-    control element.
-  - `fixtureB_sigma.json` — the edge cases: a composite (multi-key) relationship
-    mixing both column-id and `inode-`-style physical references, an unrecognized
-    column format (→ `Opaque`), an untranslatable table-calculation formula
-    (`RunningSum`), and a derived (non-warehouse-table) element.
-- **Round-trip tests** (`tests/test_roundtrip.py`) assert both fixtures survive
-  Sigma → OSI → Sigma **byte-for-byte** (structurally, modulo key order), including
-  through the same YAML serialization boundary the CLI uses, and separately assert
-  that Sigma → OSI → Sigma → OSI preserves all portable (non-`custom_extensions`)
-  content on the second OSI document.
-- **Real-world / foreign-origin coverage** (`test_osi_to_sigma.py::test_foreign_origin_document_synthesizes_valid_spec`)
-  runs the reverse converter against `examples/tpcds_semantic_model.yaml` — an Ossie
-  document that never touched Sigma — to verify the converter produces a valid,
-  useful Sigma spec (synthesized ids, ANSI-SQL-to-Sigma-formula reverse translation,
-  correct single-dataset metric placement, correct dropping of genuinely
-  cross-dataset metrics) even with no `SIGMA` custom extensions to fall back on.
-- **Schema validation**: every fixture's `sigma-to-osi` output was checked against
-  `core-spec/osi-schema.json` and `validation/validate.py`'s SQL-syntax checker (both
-  of which required small, narrowly-scoped fixes as part of this PR — see below).
-
-What is *not* yet covered: a fixture generated from a real production Sigma data model
-(only synthetic fixtures are included, deliberately, to avoid embedding any
-organization's proprietary schema/business logic in an open-source repository), and
-the custom-SQL-element case noted in §5.
-
-## Small fixes bundled with this PR (not Sigma-specific)
-
-While validating this converter's output against the repo's existing tooling, two
-pre-existing gaps were found and fixed, since they block *any* converter from
-producing schema-valid output that uses features already present in the pydantic
-model:
-
-- `core-spec/osi-schema.json` was missing `dialects`/`vendors` as valid root-level
-  `OSIDocument` properties, even though `python/src/ossie/models.py`'s `OSIDocument`
-  has defined and exported them since before this PR. Added them.
-- `validation/validate.py`'s SQL-syntax checker attempted to parse every dialect's
-  expression as SQL, including known non-SQL dialects — but its own
-  `SKIP_SQL_VALIDATION` set already excluded `MDX`/`TABLEAU`/`MAQL` for exactly this
-  reason. `SIGMA` was missing from that set (understandably, since it didn't exist
-  before this PR) and has been added alongside the new dialect.
-
-## Assessment: likelihood of upstream approval
-
-Apache Ossie uses a review-then-commit model (per `CONTRIBUTING.md`): merge requires
-at least one committer +1 and no unresolved -1, and any change to `core-spec/` itself
-carries a higher bar (dev@ discussion, then a `[VOTE]` thread). This PR is mostly
-**not** a core-spec change — it adds a new converter under `converters/sigma/`
-following the exact structure, tooling (`uv`), and conventions of the most recently
-merged converter (NVIDIA GSF, PR #247) and the most actively maintained one (dbt).
-The genuinely core-spec-touching pieces are narrow and precedented:
-
-- Adding `SIGMA` to `OSIDialect`/`OSIVendor` in `python/src/ossie/models.py` and the
-  corresponding `core-spec/osi-schema.json` enums — the same kind of addition every
-  prior converter needed (`TABLEAU`, `DATABRICKS`, `BIGQUERY`, `WISDOM`, etc. all
-  entered the enums this way), not a structural spec change.
-  It is worth confirming with the community whether such additions require the
-  full dev@/VOTE process or have historically been accepted as ordinary PR review —
-  the git history suggests the latter, but this PR does not assume that.
-- The `dialects`/`vendors` schema-sync fix and the `validate.py` `SIGMA` addition are
-  small, mechanical, and justified independently of Sigma (see above).
-
-Reasonable committer concerns to expect, roughly in order of likely weight:
-
-1. **"Why does the relationship resolution need two addressing schemes?"** — this is
-   inherent to Sigma's own data model (§4), not a design choice in this converter,
-   but it's the single most complex piece of logic here and the one most likely to
-   draw close review.
-2. **Formula language coverage as a moving target** — Sigma's formula function list
-   isn't formally published as a machine-readable grammar (unlike, say, ANSI SQL's
-   own grammar), so a committer may reasonably ask how coverage will be
-   validated/extended over time. The test suite and the module docstring's function
-   table are the answer, but this is worth calling out explicitly in the PR
-   description.
-3. **Scope of `custom_extensions` for controls** — stashing whole native elements
-   verbatim mirrors the GSF converter's precedent (README §"Fidelity and unavoidable
-   losses"), but a reviewer unfamiliar with that precedent might initially read it as
-   "hacking around" rather than the documented, intentional choice it is; pointing
-   reviewers at this LIMITATIONS.md file and the GSF README directly should resolve
-   that quickly.
-4. **No real-world fixture** — reasonable, and addressed above; a committer may ask
-   for one, which would need to come from a community member willing to contribute a
-   sanitized example (this PR intentionally does not include one, to avoid
-   embedding any organization's data model in the ASF repository).
-
-Net assessment: **likely mergeable with normal review iteration**, on the strength of
-following established converter conventions closely and treating limitations as
-first-class, tested, and documented rather than papered over — which is exactly what
-`converters/README.md`'s own "Writing a Converter" checklist and round-trip fidelity
-principles ask for. The main risk to merge speed is committer bandwidth/review
-latency (an ASF-standard risk for any PR, not specific to this one), not a structural
-objection to the approach.
+- `core-spec/osi-schema.json` was missing root-level `dialects`/`vendors`, which
+  `OSIDocument` has had all along.
+- `validation/validate.py` parsed every dialect's expression as SQL; its own
+  `SKIP_SQL_VALIDATION` set already excluded `MDX`/`TABLEAU`/`MAQL` for that reason, so
+  `SIGMA` was added alongside the new dialect.
