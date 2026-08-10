@@ -19,14 +19,18 @@
 
 # Apache Ossie ↔ Honeydew Converter
 
-Bidirectional converter between [Apache Ossie](../../core-spec/spec.md) semantic models and [Honeydew](https://honeydew.ai/docs) workspace YAML.
+Bidirectional converter between [Apache Ossie](../../core-spec/spec.md) semantic models
+and [Honeydew](https://honeydew.ai/docs) [workspace YAML](https://honeydew.ai/docs/yaml-schema).
+
+Honeydew documents this integration from its own side under
+[Apache Ossie (OSI)](https://honeydew.ai/docs/integration/apache-ossie-osi).
 
 ## Overview
 
 | Direction | Input | Output |
 |-----------|-------|--------|
-| `osi-to-honeydew` | Single Ossie YAML file | Honeydew workspace directory |
-| `honeydew-to-osi` | Honeydew workspace directory | Single Ossie YAML file |
+| `ossie-to-honeydew` | Single Ossie YAML file | Honeydew workspace directory |
+| `honeydew-to-ossie` | Honeydew workspace directory | Single Ossie YAML file |
 
 ### Ossie → Honeydew mapping
 
@@ -70,10 +74,10 @@ uv sync
 
 ```bash
 # Ossie YAML → Honeydew workspace directory
-uv run ossie-honeydew osi-to-honeydew -i input.yaml -o output_dir/
+uv run ossie-honeydew ossie-to-honeydew -i input.yaml -o output_dir/
 
 # Honeydew workspace directory → Ossie YAML
-uv run ossie-honeydew honeydew-to-osi -i workspace_dir/ -o output.yaml
+uv run ossie-honeydew honeydew-to-ossie -i workspace_dir/ -o output.yaml
 ```
 
 ## Tests

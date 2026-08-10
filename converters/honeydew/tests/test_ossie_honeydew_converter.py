@@ -29,36 +29,36 @@ import yaml
 from ossie_honeydew.converter import (
     HoneydewConversionError,
     _assign_metrics_to_entities,
-    _build_osi_metadata,
+    _build_ossie_metadata,
     _check_safe_path,
     _fields_to_honeydew,
     _find_entity_in_expression,
-    _honeydew_datatype_to_osi_dimension,
+    _honeydew_datatype_to_ossie_dimension,
     _is_simple_identifier,
-    _osi_field_to_honeydew_datatype,
-    _parse_osi_source,
+    _ossie_field_to_honeydew_datatype,
+    _parse_ossie_source,
     _pick_ansi_expression,
-    _read_osi_metadata,
-    convert_honeydew_to_osi,
-    convert_osi_to_honeydew,
+    _read_ossie_metadata,
+    convert_honeydew_to_ossie,
+    convert_ossie_to_honeydew,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-OSI_VERSION = "0.2.0.dev0"
+OSSIE_VERSION = "0.2.0.dev0"
 
 
-def _osi(model_dict):
+def _ossie(model_dict):
     return yaml.dump(
-        {"version": OSI_VERSION, "semantic_model": [model_dict]},
+        {"version": OSSIE_VERSION, "semantic_model": [model_dict]},
         default_flow_style=False,
         sort_keys=False,
     )
 
 
-def _minimal_osi_field(name, expr, is_dimension=True, is_time=False):
+def _minimal_ossie_field(name, expr, is_dimension=True, is_time=False):
     field = {
         "name": name,
         "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": expr}]},
@@ -77,9 +77,9 @@ def _minimal_model():
                 "source": "db.schema.orders",
                 "primary_key": ["order_id"],
                 "fields": [
-                    _minimal_osi_field("order_id", "order_id"),
-                    _minimal_osi_field("order_date", "order_date", is_time=True),
-                    _minimal_osi_field("total", "total_amount", is_dimension=False),
+                    _minimal_ossie_field("order_id", "order_id"),
+                    _minimal_ossie_field("order_date", "order_date", is_time=True),
+                    _minimal_ossie_field("total", "total_amount", is_dimension=False),
                 ],
             }
         ],
@@ -133,21 +133,21 @@ def _write_workspace(tmp_dir, workspace_name, entities):
                 yaml.dump(m, f)
 
 
-def _osi_roundtrip(model_dict, tmp_path):
+def _ossie_roundtrip(model_dict, tmp_path):
     """Ossie → Honeydew → Ossie; returns the semantic model dict."""
-    files = convert_osi_to_honeydew(_osi(model_dict))
+    files = convert_ossie_to_honeydew(_ossie(model_dict))
     for rel_path, content in files.items():
         p = tmp_path / rel_path
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
-    return yaml.safe_load(convert_honeydew_to_osi(str(tmp_path)))["semantic_model"][0]
+    return yaml.safe_load(convert_honeydew_to_ossie(str(tmp_path)))["semantic_model"][0]
 
 
 def _honeydew_roundtrip(entities, tmp_path):
     """Honeydew → Ossie → Honeydew; returns Path to the output workspace directory."""
     _write_workspace(str(tmp_path), "ws", entities)
-    osi_yaml = convert_honeydew_to_osi(str(tmp_path))
-    files = convert_osi_to_honeydew(osi_yaml)
+    ossie_yaml = convert_honeydew_to_ossie(str(tmp_path))
+    files = convert_ossie_to_honeydew(ossie_yaml)
     out_dir = tmp_path / "out"
     for rel_path, content in files.items():
         p = out_dir / rel_path
@@ -177,8 +177,8 @@ def test_is_simple_identifier(expr, expected):
     ("WITH cte AS (SELECT 1) SELECT * FROM cte", "WITH cte AS (SELECT 1) SELECT * FROM cte", "sql"),
     ("", "", "table"),
 ])
-def test_parse_osi_source(source, expected_sql, expected_type):
-    sql, dtype = _parse_osi_source(source)
+def test_parse_ossie_source(source, expected_sql, expected_type):
+    sql, dtype = _parse_ossie_source(source)
     assert sql == expected_sql and dtype == expected_type
 
 
@@ -187,8 +187,8 @@ def test_parse_osi_source(source, expected_sql, expected_type):
     ({"dimension": {"is_time": False}}, "string"),
     ({}, "number"),
 ])
-def test_osi_field_to_honeydew_datatype(field, expected_dt):
-    assert _osi_field_to_honeydew_datatype(field) == expected_dt
+def test_ossie_field_to_honeydew_datatype(field, expected_dt):
+    assert _ossie_field_to_honeydew_datatype(field) == expected_dt
 
 
 @pytest.mark.parametrize("datatype,expected_dim", [
@@ -199,8 +199,8 @@ def test_osi_field_to_honeydew_datatype(field, expected_dt):
     ("number", None),
     ("float", None),
 ])
-def test_honeydew_datatype_to_osi_dimension(datatype, expected_dim):
-    assert _honeydew_datatype_to_osi_dimension(datatype) == expected_dim
+def test_honeydew_datatype_to_ossie_dimension(datatype, expected_dim):
+    assert _honeydew_datatype_to_ossie_dimension(datatype) == expected_dim
 
 
 @pytest.mark.parametrize("expr,entities,expected", [
@@ -248,42 +248,55 @@ def test_pick_ansi_expression_non_dict_warns():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_build_and_read_ai_context_string():
-    section = _build_osi_metadata(ai_context="orders, purchases")
-    result = _read_osi_metadata({"metadata": [section]})
+    section = _build_ossie_metadata(ai_context="orders, purchases")
+    result = _read_ossie_metadata({"metadata": [section]})
     assert result["ai_context"] == "orders, purchases"
 
 
 def test_build_and_read_ai_context_dict():
     ctx = {"instructions": "Use for sales", "synonyms": ["orders", "purchases"]}
-    section = _build_osi_metadata(ai_context=ctx)
-    result = _read_osi_metadata({"metadata": [section]})
+    section = _build_ossie_metadata(ai_context=ctx)
+    result = _read_ossie_metadata({"metadata": [section]})
     assert result["ai_context"] == ctx
 
 
 def test_build_and_read_unique_keys():
     uks = [["col1", "col2"], ["col3"]]
-    section = _build_osi_metadata(unique_keys=uks)
-    result = _read_osi_metadata({"metadata": [section]})
+    section = _build_ossie_metadata(unique_keys=uks)
+    result = _read_ossie_metadata({"metadata": [section]})
     assert result["unique_keys"] == uks
 
 
 def test_build_and_read_custom_extensions():
     exts = [{"vendor_name": "SNOWFLAKE", "data": '{"warehouse": "WH"}'}]
-    section = _build_osi_metadata(custom_extensions=exts)
-    result = _read_osi_metadata({"metadata": [section]})
+    section = _build_ossie_metadata(custom_extensions=exts)
+    result = _read_ossie_metadata({"metadata": [section]})
     assert result["custom_extensions"] == exts
 
 
-def test_read_osi_metadata_no_osi_section():
-    assert _read_osi_metadata({"metadata": [{"name": "other", "metadata": []}]}) == {}
+def test_read_ossie_metadata_no_ossie_section():
+    assert _read_ossie_metadata({"metadata": [{"name": "other", "metadata": []}]}) == {}
 
 
-def test_read_osi_metadata_no_metadata():
-    assert _read_osi_metadata({}) == {}
+def test_read_legacy_osi_metadata_section():
+    """Workspaces written before the rebrand named the section 'osi'; still read it."""
+    section = _build_ossie_metadata(
+        ai_context={"synonyms": ["orders"]},
+        unique_keys=[["col1"]],
+        custom_extensions=[{"vendor_name": "SNOWFLAKE", "data": "{}"}],
+    )
+    legacy = {**section, "name": "osi"}
+    assert _read_ossie_metadata({"metadata": [legacy]}) == _read_ossie_metadata(
+        {"metadata": [section]}
+    )
 
 
-def test_build_osi_metadata_nothing_to_store():
-    assert _build_osi_metadata() is None
+def test_read_ossie_metadata_no_metadata():
+    assert _read_ossie_metadata({}) == {}
+
+
+def test_build_ossie_metadata_nothing_to_store():
+    assert _build_ossie_metadata() is None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -418,7 +431,7 @@ _REL_MODEL = {
             "sql": "db.s.orders", "dataset_type": "table",
             "attributes": [{"column": "status", "name": "status",
                             "datatype": "string", "labels": ["sales"],
-                            "metadata": [{"name": "osi", "metadata": [
+                            "metadata": [{"name": "ossie", "metadata": [
                                 {"name": "label", "value": "sales"}
                             ]}]}],
         },
@@ -456,7 +469,7 @@ _REL_MODEL = {
                 "column": "total", "name": "total", "datatype": "number",
                 "description": "Use for revenue",
                 "labels": ["rev", "earnings"],
-                "metadata": [{"name": "osi", "metadata": [
+                "metadata": [{"name": "ossie", "metadata": [
                     {"name": "ai_context",
                      "value": '{"instructions": "Use for revenue", "synonyms": ["rev", "earnings"]}'},
                 ]}],
@@ -474,7 +487,7 @@ _REL_MODEL = {
         {
             "type": "entity", "name": "items", "keys": ["item_id"],
             "key_dataset": "items", "relations": [],
-            "metadata": [{"name": "osi", "metadata": [
+            "metadata": [{"name": "ossie", "metadata": [
                 {"name": "unique_keys", "value": '[["sku"], ["item_id", "variant"]]'},
             ]}],
         },
@@ -488,7 +501,7 @@ _REL_MODEL = {
         "schema/orders/orders.yml",
         {
             "type": "entity", "name": "orders", "key_dataset": "orders", "relations": [],
-            "metadata": [{"name": "osi", "metadata": [
+            "metadata": [{"name": "ossie", "metadata": [
                 {"name": "custom_extensions",
                  "value": '[{"vendor_name": "SNOWFLAKE", "data": "{\\"warehouse\\": \\"WH\\"}"}]'},
             ]}],
@@ -520,7 +533,7 @@ _REL_MODEL = {
         "workspace.yml",
         {
             "type": "workspace", "name": "m",
-            "metadata": [{"name": "osi", "metadata": [
+            "metadata": [{"name": "ossie", "metadata": [
                 {"name": "ai_context",
                  "value": '{"instructions": "Use for retail analytics", "synonyms": ["store"]}'},
             ]}],
@@ -559,13 +572,13 @@ _REL_MODEL = {
         id="composite-pk",
     ),
 ])
-def test_osi_to_honeydew_file_content(model, path, expected):
-    files = convert_osi_to_honeydew(_osi(model))
+def test_ossie_to_honeydew_file_content(model, path, expected):
+    files = convert_ossie_to_honeydew(_ossie(model))
     assert path in files
     assert yaml.safe_load(files[path]) == expected
 
 
-def test_osi_to_honeydew_metric_entity_hint_overrides_expression():
+def test_ossie_to_honeydew_metric_entity_hint_overrides_expression():
     model = {"name": "m",
         "datasets": [
             {"name": "orders", "source": "db.s.orders", "fields": []},
@@ -576,29 +589,29 @@ def test_osi_to_honeydew_metric_entity_hint_overrides_expression():
             "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(orders.x)"}]},
             "custom_extensions": [{"vendor_name": "HONEYDEW", "data": '{"entity": "customers"}'}],
         }]}
-    files = convert_osi_to_honeydew(_osi(model))
+    files = convert_ossie_to_honeydew(_ossie(model))
     assert "schema/customers/metrics/cnt.yml" in files
     assert "schema/orders/metrics/cnt.yml" not in files
 
 
-def test_osi_to_honeydew_invalid_version_raises():
+def test_ossie_to_honeydew_invalid_version_raises():
     with pytest.raises(HoneydewConversionError, match="Unsupported"):
-        convert_osi_to_honeydew("version: '9.9.9'\nsemantic_model:\n  - name: m\n")
+        convert_ossie_to_honeydew("version: '9.9.9'\nsemantic_model:\n  - name: m\n")
 
 
-def test_osi_to_honeydew_missing_semantic_model_raises():
+def test_ossie_to_honeydew_missing_semantic_model_raises():
     with pytest.raises(HoneydewConversionError):
-        convert_osi_to_honeydew(f"version: '{OSI_VERSION}'\n")
+        convert_ossie_to_honeydew(f"version: '{OSSIE_VERSION}'\n")
 
 
-def test_osi_to_honeydew_multiple_models_warns():
-    doc = yaml.dump({"version": OSI_VERSION, "semantic_model": [
+def test_ossie_to_honeydew_multiple_models_warns():
+    doc = yaml.dump({"version": OSSIE_VERSION, "semantic_model": [
         {"name": "m1", "datasets": []},
         {"name": "m2", "datasets": []},
     ]})
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        files = convert_osi_to_honeydew(doc)
+        files = convert_ossie_to_honeydew(doc)
     assert any("only the first" in str(x.message) for x in w)
     assert yaml.safe_load(files["workspace.yml"]) == {"type": "workspace", "name": "m1"}
 
@@ -608,7 +621,7 @@ def test_osi_to_honeydew_multiple_models_warns():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _hd_root(sm):
-    return {"version": OSI_VERSION, "vendors": ["HONEYDEW"], "semantic_model": [sm]}
+    return {"version": OSSIE_VERSION, "vendors": ["HONEYDEW"], "semantic_model": [sm]}
 
 
 def _ansi(expr):
@@ -786,35 +799,35 @@ def _ansi(expr):
         id="calc-attr",
     ),
 ])
-def test_honeydew_to_osi_output(tmp_path, ws_name, entities, expected_root):
+def test_honeydew_to_ossie_output(tmp_path, ws_name, entities, expected_root):
     _write_workspace(str(tmp_path), ws_name, entities)
-    result = yaml.safe_load(convert_honeydew_to_osi(str(tmp_path)))
+    result = yaml.safe_load(convert_honeydew_to_ossie(str(tmp_path)))
     assert result == expected_root
 
 
-def test_honeydew_to_osi_missing_workspace_raises(tmp_path):
+def test_honeydew_to_ossie_missing_workspace_raises(tmp_path):
     with pytest.raises(HoneydewConversionError, match="workspace.yml"):
-        convert_honeydew_to_osi(str(tmp_path))
+        convert_honeydew_to_ossie(str(tmp_path))
 
 
-def test_honeydew_to_osi_missing_schema_dir_empty_model(tmp_path):
+def test_honeydew_to_ossie_missing_schema_dir_empty_model(tmp_path):
     (tmp_path / "workspace.yml").write_text(yaml.dump({"type": "workspace", "name": "ws"}))
-    result = yaml.safe_load(convert_honeydew_to_osi(str(tmp_path)))
-    assert result == {"version": OSI_VERSION, "vendors": ["HONEYDEW"],
+    result = yaml.safe_load(convert_honeydew_to_ossie(str(tmp_path)))
+    assert result == {"version": OSSIE_VERSION, "vendors": ["HONEYDEW"],
                       "semantic_model": [{"name": "ws", "datasets": []}]}
 
 
-def test_honeydew_to_osi_empty_metric_sql_skipped(tmp_path):
+def test_honeydew_to_ossie_empty_metric_sql_skipped(tmp_path):
     _write_workspace(str(tmp_path), "ws", [{"name": "orders", "keys": ["id"],
         "key_dataset": "orders", "sql": "db.s.orders", "dataset_attrs": [],
         "metrics": [{"type": "metric", "entity": "orders", "name": "bad",
                      "datatype": "number", "sql": ""}]}])
     with warnings.catch_warnings(record=True):
-        result = yaml.safe_load(convert_honeydew_to_osi(str(tmp_path)))
+        result = yaml.safe_load(convert_honeydew_to_ossie(str(tmp_path)))
     assert "metrics" not in result["semantic_model"][0]
 
 
-def test_honeydew_to_osi_duplicate_relations_deduplicated(tmp_path):
+def test_honeydew_to_ossie_duplicate_relations_deduplicated(tmp_path):
     _write_workspace(str(tmp_path), "ws", [
         {"name": "orders", "keys": ["id"], "key_dataset": "orders", "sql": "db.s.orders",
          "relations": [{"target_entity": "customers", "rel_type": "many-to-one",
@@ -825,11 +838,11 @@ def test_honeydew_to_osi_duplicate_relations_deduplicated(tmp_path):
                         "connection": [{"src_field": "id", "target_field": "cid"}]}],
          "dataset_attrs": []},
     ])
-    result = yaml.safe_load(convert_honeydew_to_osi(str(tmp_path)))
+    result = yaml.safe_load(convert_honeydew_to_ossie(str(tmp_path)))
     assert len(result["semantic_model"][0].get("relationships", [])) == 1
 
 
-def test_honeydew_to_osi_relation_target_columns_are_unique_keys(tmp_path):
+def test_honeydew_to_ossie_relation_target_columns_are_unique_keys(tmp_path):
     # Honeydew validates that a many-to-one relation joins to the target entity's
     # keys, so the relation's to_columns are always covered by the target dataset's
     # unique_keys (derived from those keys). This preserves the cardinality metadata
@@ -842,7 +855,7 @@ def test_honeydew_to_osi_relation_target_columns_are_unique_keys(tmp_path):
         {"name": "customers", "keys": ["id"], "key_dataset": "customers",
          "sql": "db.s.customers", "dataset_attrs": []},
     ])
-    sm = yaml.safe_load(convert_honeydew_to_osi(str(tmp_path)))["semantic_model"][0]
+    sm = yaml.safe_load(convert_honeydew_to_ossie(str(tmp_path)))["semantic_model"][0]
     datasets = {ds["name"]: ds for ds in sm["datasets"]}
     rel = sm["relationships"][0]
     target_ds = datasets[rel["to"]]
@@ -972,24 +985,24 @@ def test_honeydew_to_osi_relation_target_columns_are_unique_keys(tmp_path):
         id="ai-context-string-becomes-desc",
     ),
 ])
-def test_osi_roundtrip_sm(tmp_path, model, expected_sm):
-    assert _osi_roundtrip(model, tmp_path) == expected_sm
+def test_ossie_roundtrip_sm(tmp_path, model, expected_sm):
+    assert _ossie_roundtrip(model, tmp_path) == expected_sm
 
 
-def test_osi_roundtrip_tpcds_example(tmp_path):
+def test_ossie_roundtrip_tpcds_example(tmp_path):
     tpcds_path = (
         Path(__file__).resolve().parent.parent.parent.parent
         / "examples" / "tpcds_semantic_model.yaml"
     )
     if not tpcds_path.exists():
         pytest.skip("TPC-DS example not found")
-    osi_yaml = tpcds_path.read_text()
-    files = convert_osi_to_honeydew(osi_yaml)
+    ossie_yaml = tpcds_path.read_text()
+    files = convert_ossie_to_honeydew(ossie_yaml)
     for rel_path, content in files.items():
         p = tmp_path / rel_path
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
-    result = yaml.safe_load(convert_honeydew_to_osi(str(tmp_path)))
+    result = yaml.safe_load(convert_honeydew_to_ossie(str(tmp_path)))
     sm = result["semantic_model"][0]
     assert sm["name"] == "tpcds_retail_model"
     ds_names = {ds["name"] for ds in sm["datasets"]}
@@ -1049,7 +1062,7 @@ def test_osi_roundtrip_tpcds_example(tmp_path):
             "attributes": [{
                 "column": "status", "name": "status", "datatype": "string",
                 "labels": ["sales"],
-                "metadata": [{"name": "osi", "metadata": [
+                "metadata": [{"name": "ossie", "metadata": [
                     {"name": "ai_context", "value": '{"synonyms": ["sales"]}'},
                 ]}],
             }],
@@ -1260,7 +1273,7 @@ def test_empty_or_whitespace_field_expression_skipped(expression):
         "expression": expression,
         "dimension": {"is_time": False},
     }]}]}
-    files = convert_osi_to_honeydew(_osi(model))
+    files = convert_ossie_to_honeydew(_ossie(model))
     ds = yaml.safe_load(files["schema/orders/datasets/orders.yml"])
     assert ds == {"type": "dataset", "entity": "orders", "name": "orders",
                   "sql": "db.s.orders", "dataset_type": "table", "attributes": []}
@@ -1275,7 +1288,7 @@ def test_empty_or_whitespace_metric_expression_skipped(expression):
     model = {"name": "m",
         "datasets": [{"name": "orders", "source": "db.s.orders", "fields": []}],
         "metrics": [{"name": "bad_m", "expression": expression}]}
-    files = convert_osi_to_honeydew(_osi(model))
+    files = convert_ossie_to_honeydew(_ossie(model))
     assert "schema/orders/metrics/bad_m.yml" not in files
 
 
@@ -1287,7 +1300,7 @@ def test_non_dict_expression_warns():
     }]}]}
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        files = convert_osi_to_honeydew(_osi(model))
+        files = convert_ossie_to_honeydew(_ossie(model))
     assert any("must be a mapping" in str(x.message) for x in w)
     ds = yaml.safe_load(files["schema/orders/datasets/orders.yml"])
     assert ds == {"type": "dataset", "entity": "orders", "name": "orders",
@@ -1303,7 +1316,7 @@ def test_duplicate_metric_name_warns():
         ]}
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        files = convert_osi_to_honeydew(_osi(model))
+        files = convert_ossie_to_honeydew(_ossie(model))
     assert any("total" in str(x.message) for x in w)
     assert yaml.safe_load(files["schema/orders/metrics/total.yml"]) == {
         "type": "metric", "entity": "orders", "name": "total",
@@ -1316,7 +1329,7 @@ def test_metric_string_ai_context_preserved_in_roundtrip(tmp_path):
         "datasets": [{"name": "orders", "source": "db.s.orders", "fields": []}],
         "metrics": [{"name": "rev", "ai_context": "Use for revenue analysis",
                      "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(orders.total)"}]}}]}
-    sm = _osi_roundtrip(model, tmp_path)
+    sm = _ossie_roundtrip(model, tmp_path)
     assert sm == {
         "name": "m",
         "datasets": [{"name": "orders", "source": "db.s.orders"}],
@@ -1330,7 +1343,7 @@ def test_metric_string_ai_context_preserved_in_roundtrip(tmp_path):
     }
 
 
-def test_malformed_osi_metadata_json_warns(tmp_path):
+def test_malformed_ossie_metadata_json_warns(tmp_path):
     ws_path = tmp_path / "workspace.yml"
     ws_path.write_text(yaml.dump({"type": "workspace", "name": "ws"}))
     base = tmp_path / "schema" / "orders"
@@ -1338,7 +1351,7 @@ def test_malformed_osi_metadata_json_warns(tmp_path):
     entity = {
         "type": "entity", "name": "orders", "keys": ["id"], "key_dataset": "orders",
         "relations": [],
-        "metadata": [{"name": "osi", "metadata": [
+        "metadata": [{"name": "ossie", "metadata": [
             {"name": "unique_keys", "value": "[broken json"},
         ]}],
     }
@@ -1349,7 +1362,7 @@ def test_malformed_osi_metadata_json_warns(tmp_path):
     ))
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        convert_honeydew_to_osi(str(tmp_path))
+        convert_honeydew_to_ossie(str(tmp_path))
     assert any("unique_keys" in str(x.message) for x in w)
 
 
@@ -1396,7 +1409,7 @@ def test_connectionless_relation_warns():
     ], "relationships": [{"name": "r", "from": "orders", "to": "customers"}]}
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        files = convert_osi_to_honeydew(_osi(model))
+        files = convert_ossie_to_honeydew(_ossie(model))
     assert any("resolve the join" in str(x.message) for x in w)
     assert yaml.safe_load(files["schema/orders/orders.yml"]) == {
         "type": "entity", "name": "orders", "key_dataset": "orders",
@@ -1415,17 +1428,17 @@ def test_connectionless_relation_warns():
 ])
 def test_vendors_roundtrip(tmp_path, input_vendors, expected_vendors):
     doc = yaml.dump({
-        "version": OSI_VERSION,
+        "version": OSSIE_VERSION,
         "vendors": input_vendors,
         "semantic_model": [{"name": "m", "datasets": []}],
     })
-    files = convert_osi_to_honeydew(doc)
+    files = convert_ossie_to_honeydew(doc)
     for rel_path, content in files.items():
         p = tmp_path / rel_path
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
-    result = yaml.safe_load(convert_honeydew_to_osi(str(tmp_path)))
-    assert result == {"version": OSI_VERSION, "vendors": expected_vendors,
+    result = yaml.safe_load(convert_honeydew_to_ossie(str(tmp_path)))
+    assert result == {"version": OSSIE_VERSION, "vendors": expected_vendors,
                       "semantic_model": [{"name": "m", "datasets": []}]}
 
 
@@ -1433,11 +1446,11 @@ def test_vendors_roundtrip(tmp_path, input_vendors, expected_vendors):
 # main() CLI smoke tests
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_main_osi_to_honeydew(tmp_path):
+def test_main_ossie_to_honeydew(tmp_path):
     import subprocess
     input_file = tmp_path / "model.yaml"
     input_file.write_text(yaml.dump({
-        "version": OSI_VERSION,
+        "version": OSSIE_VERSION,
         "semantic_model": [{"name": "m", "datasets": [
             {"name": "orders", "source": "db.s.orders", "fields": []}
         ]}],
@@ -1445,7 +1458,7 @@ def test_main_osi_to_honeydew(tmp_path):
     output_dir = tmp_path / "out"
     result = subprocess.run(
         [sys.executable, "-m", "ossie_honeydew.converter",
-         "osi-to-honeydew", "-i", str(input_file), "-o", str(output_dir)],
+         "ossie-to-honeydew", "-i", str(input_file), "-o", str(output_dir)],
         capture_output=True, text=True,
     )
     assert result.returncode == 0
@@ -1454,7 +1467,7 @@ def test_main_osi_to_honeydew(tmp_path):
     }
 
 
-def test_main_honeydew_to_osi(tmp_path):
+def test_main_honeydew_to_ossie(tmp_path):
     import subprocess
     _write_workspace(str(tmp_path), "ws", [{
         "name": "orders", "keys": ["id"], "key_dataset": "orders",
@@ -1463,12 +1476,12 @@ def test_main_honeydew_to_osi(tmp_path):
     output_file = tmp_path / "output.yaml"
     result = subprocess.run(
         [sys.executable, "-m", "ossie_honeydew.converter",
-         "honeydew-to-osi", "-i", str(tmp_path), "-o", str(output_file)],
+         "honeydew-to-ossie", "-i", str(tmp_path), "-o", str(output_file)],
         capture_output=True, text=True,
     )
     assert result.returncode == 0
     assert yaml.safe_load(output_file.read_text()) == {
-        "version": OSI_VERSION,
+        "version": OSSIE_VERSION,
         "vendors": ["HONEYDEW"],
         "semantic_model": [{"name": "ws", "datasets": [
             {"name": "orders", "source": "DB.S.ORDERS", "primary_key": ["id"],
@@ -1481,14 +1494,14 @@ def test_main_path_traversal_rejected(tmp_path):
     import subprocess
     input_file = tmp_path / "model.yaml"
     input_file.write_text(
-        f"version: '{OSI_VERSION}'\nsemantic_model:\n"
+        f"version: '{OSSIE_VERSION}'\nsemantic_model:\n"
         "  - name: m\n    datasets:\n"
         "      - name: '../../evil'\n        source: db.s.evil\n        fields: []\n"
     )
     output_dir = tmp_path / "out"
     result = subprocess.run(
         [sys.executable, "-m", "ossie_honeydew.converter",
-         "osi-to-honeydew", "-i", str(input_file), "-o", str(output_dir)],
+         "ossie-to-honeydew", "-i", str(input_file), "-o", str(output_dir)],
         capture_output=True, text=True,
     )
     assert result.returncode == 1
