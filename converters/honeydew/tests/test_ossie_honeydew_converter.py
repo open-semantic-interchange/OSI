@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Tests for the bidirectional OSI ↔ Honeydew converter."""
+"""Tests for the bidirectional Ossie ↔ Honeydew converter."""
 
 import json
 import os
@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from honeydew_osi.converter import (
+from ossie_honeydew.converter import (
     HoneydewConversionError,
     _assign_metrics_to_entities,
     _build_osi_metadata,
@@ -134,7 +134,7 @@ def _write_workspace(tmp_dir, workspace_name, entities):
 
 
 def _osi_roundtrip(model_dict, tmp_path):
-    """OSI → Honeydew → OSI; returns the semantic model dict."""
+    """Ossie → Honeydew → Ossie; returns the semantic model dict."""
     files = convert_osi_to_honeydew(_osi(model_dict))
     for rel_path, content in files.items():
         p = tmp_path / rel_path
@@ -144,7 +144,7 @@ def _osi_roundtrip(model_dict, tmp_path):
 
 
 def _honeydew_roundtrip(entities, tmp_path):
-    """Honeydew → OSI → Honeydew; returns Path to the output workspace directory."""
+    """Honeydew → Ossie → Honeydew; returns Path to the output workspace directory."""
     _write_workspace(str(tmp_path), "ws", entities)
     osi_yaml = convert_honeydew_to_osi(str(tmp_path))
     files = convert_osi_to_honeydew(osi_yaml)
@@ -244,7 +244,7 @@ def test_pick_ansi_expression_non_dict_warns():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# OSI metadata helpers
+# Ossie metadata helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_build_and_read_ai_context_string():
@@ -339,7 +339,7 @@ def test_check_safe_path(rel_path, expected):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# OSI → Honeydew: file content
+# Ossie → Honeydew: file content
 # ─────────────────────────────────────────────────────────────────────────────
 
 _REL_MODEL = {
@@ -604,7 +604,7 @@ def test_osi_to_honeydew_multiple_models_warns():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Honeydew → OSI: full document
+# Honeydew → Ossie: full document
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _hd_root(sm):
@@ -763,7 +763,7 @@ def _ansi(expr):
         }]}),
         id="metric",
     ),
-    # ── calculated attribute → OSI field with HONEYDEW extension ─────────────
+    # ── calculated attribute → Ossie field with HONEYDEW extension ─────────────
     pytest.param(
         "ws",
         [{"name": "orders", "keys": ["id"], "key_dataset": "orders", "sql": "db.s.orders",
@@ -833,7 +833,7 @@ def test_honeydew_to_osi_relation_target_columns_are_unique_keys(tmp_path):
     # Honeydew validates that a many-to-one relation joins to the target entity's
     # keys, so the relation's to_columns are always covered by the target dataset's
     # unique_keys (derived from those keys). This preserves the cardinality metadata
-    # for OSI consumers (e.g. Snowflake) without inspecting the relation itself.
+    # for Ossie consumers (e.g. Snowflake) without inspecting the relation itself.
     _write_workspace(str(tmp_path), "ws", [
         {"name": "orders", "keys": ["order_id"], "key_dataset": "orders", "sql": "db.s.orders",
          "relations": [{"target_entity": "customers", "rel_type": "many-to-one",
@@ -850,7 +850,7 @@ def test_honeydew_to_osi_relation_target_columns_are_unique_keys(tmp_path):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# OSI → Honeydew → OSI round-trip: full semantic model
+# Ossie → Honeydew → Ossie round-trip: full semantic model
 # ─────────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("model,expected_sm", [
@@ -862,7 +862,7 @@ def test_honeydew_to_osi_relation_target_columns_are_unique_keys(tmp_path):
     pytest.param(
         {"name": "m", "datasets": [{"name": "orders", "source": "db.s.orders",
             "primary_key": ["order_id"], "fields": []}]},
-        # OSI → Honeydew → OSI normalizes: the primary key surfaces as a unique key,
+        # Ossie → Honeydew → Ossie normalizes: the primary key surfaces as a unique key,
         # because Honeydew expresses uniqueness through entity keys.
         {"name": "m", "datasets": [{"name": "orders", "source": "db.s.orders",
             "primary_key": ["order_id"], "unique_keys": [["order_id"]]}]},
@@ -997,7 +997,7 @@ def test_osi_roundtrip_tpcds_example(tmp_path):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Honeydew → OSI → Honeydew round-trip: full file content
+# Honeydew → Ossie → Honeydew round-trip: full file content
 # ─────────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("entities,path,expected", [
@@ -1444,7 +1444,7 @@ def test_main_osi_to_honeydew(tmp_path):
     }))
     output_dir = tmp_path / "out"
     result = subprocess.run(
-        [sys.executable, "-m", "honeydew_osi.converter",
+        [sys.executable, "-m", "ossie_honeydew.converter",
          "osi-to-honeydew", "-i", str(input_file), "-o", str(output_dir)],
         capture_output=True, text=True,
     )
@@ -1462,7 +1462,7 @@ def test_main_honeydew_to_osi(tmp_path):
     }])
     output_file = tmp_path / "output.yaml"
     result = subprocess.run(
-        [sys.executable, "-m", "honeydew_osi.converter",
+        [sys.executable, "-m", "ossie_honeydew.converter",
          "honeydew-to-osi", "-i", str(tmp_path), "-o", str(output_file)],
         capture_output=True, text=True,
     )
@@ -1487,7 +1487,7 @@ def test_main_path_traversal_rejected(tmp_path):
     )
     output_dir = tmp_path / "out"
     result = subprocess.run(
-        [sys.executable, "-m", "honeydew_osi.converter",
+        [sys.executable, "-m", "ossie_honeydew.converter",
          "osi-to-honeydew", "-i", str(input_file), "-o", str(output_dir)],
         capture_output=True, text=True,
     )
