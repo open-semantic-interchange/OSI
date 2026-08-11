@@ -22,6 +22,11 @@
 Converts between Apache Ossie semantic models and [Alibaba Cloud Hologres](https://www.alibabacloud.com/product/hologres)
 Semantic Views, available in Hologres V5.0.0 and later.
 
+A Hologres Semantic View declares tables, their relationships, business dimensions and
+metrics as a queryable database object. Queries name dimensions and `AGG(metric)` instead
+of repeating joins and aggregations, and the engine aggregates each metric within its own
+join subtree so a one-to-many join cannot inflate a total.
+
 The two directions are deliberately asymmetric, because Hologres publishes and consumes
 its Semantic View definitions in different formats:
 
@@ -79,6 +84,93 @@ ddl = convert_ossie_to_semantic_view(ossie_yaml, schema="public")
 ossie_yaml = convert_semantic_view_to_ossie(model_yaml)
 ```
 
+## Mapping
+
+| Apache Ossie | Hologres Semantic View |
+|--------------|------------------------|
+| `semantic_model.name` | `view_name` |
+| `semantic_model.description` | view-level `COMMENT` |
+| `dataset.name` | `TABLES` alias |
+| `dataset.source` | the `[schema.]table` in `TABLES` |
+| `dataset.primary_key` | `PRIMARY KEY (...)` |
+| `dataset.fields[]` | `DIMENSIONS <alias>.<name> AS <expr>` |
+| `field.description` | dimension `COMMENT` |
+| `metrics[]` | `METRICS <owner>.<name> AS <agg>` |
+| `metric.description` | metric `COMMENT` |
+| `relationships[]` | `RELATIONSHIPS <name> AS <from>(cols) REFERENCES <to>(cols)` |
+
+Three mappings are worth explaining.
+
+**Dataset names are table aliases.** On import the Hologres alias (`o`, `c`) becomes the
+Ossie dataset name, because the alias is what every dimension, metric and relationship
+references. That also makes Hologres' own `sum(o.amount)` already correct as an Ossie
+dataset-qualified metric expression.
+
+**Relationship direction carries cardinality.** Hologres records
+`relationship_type: many_to_one` and nothing else. Ossie already encodes the same fact in
+the direction of a relationship -- `from` is the many side holding the foreign key, `to`
+is the one side holding the primary key -- so the type is derived rather than stored.
+Getting the direction backwards makes Hologres treat a join as one-to-many and aggregate
+a metric more than once, so it matters.
+
+**Metric ownership.** Ossie metrics are model-level; Hologres namespaces each metric under
+the table it aggregates. The owner is inferred from the metric expression's column
+references. `COUNT(*)` references none, so it needs an explicit owner via a
+`custom_extensions` entry or `--metric-owner`; the converter refuses to guess, because
+picking the wrong owner silently changes the number under a fan-out join.
+
+## Requirements
+
+Hologres V5.0.0 or later, with `hg_enable_semantic_view_query` on (the default). Confirm
+with:
+
+```sql
+SELECT hg_version();
+```
+
+## Limitations
+
+These come from Hologres itself, not the converter. The converter reports each one with
+the offending field named rather than emitting DDL the server will reject.
+
+### Definitions
+
+| Constraint | Effect |
+|------------|--------|
+| A definition expression must be row-level over a **single** table | A dimension or metric spanning two datasets is rejected |
+| Aggregates are limited to `count` / `sum` / `avg` / `min` / `max` | `stddev`, `percentile_cont` and friends are rejected |
+| No derived, ratio or filtered metrics | `SUM(a) / COUNT(*)` is rejected; compute it in the query layer |
+| A `REFERENCES` target must be the target table's `PRIMARY KEY` | A relationship whose `to_columns` are not the target's key is rejected. A matching `unique_keys` entry is promoted with a warning |
+| No window functions, subqueries, `VOLATILE` or set-returning functions | Structurally detectable cases are rejected here; the rest are rejected by Hologres at `CREATE` time |
+| A top-level operator in a definition must be parenthesised | Handled automatically: `a \|\| b` is emitted as `(a \|\| b)` |
+| Dimension and metric names are referenced bare in queries | Names must be unique across the whole view. Ossie only requires field names to be unique per dataset, so a collision across datasets is rejected rather than silently renamed |
+| A Semantic View cannot span databases | Datasets naming different databases are rejected |
+| No `CREATE OR REPLACE` or `ALTER SEMANTIC VIEW` | Use `--drop-if-exists` to recreate |
+
+### Information not preserved on export
+
+Hologres offers exactly one annotation slot: `COMMENT`, on the view, each dimension and
+each metric. `description` maps there, and a string-form `ai_context` is folded in.
+Everything else is reported as a warning rather than dropped silently:
+`unique_keys` (unless promoted), `datatype`, `dimension.is_time`, `label`, object-form
+`ai_context` (synonyms, instructions, examples), `dataset.description` (the `TABLES`
+clause takes no comment), `relationship.ai_context`, and non-`HOLOGRES` vendor
+`custom_extensions`.
+
+### Round-trip fidelity
+
+A full loop is lossless for everything Hologres stores:
+
+```
+Ossie -> DDL -> Hologres -> model_yaml -> Ossie
+```
+
+Two caveats. Expressions come back **normalized, not byte-identical**: sqlglot upper-cases
+function names and rewrites `x::text` as `CAST(x AS TEXT)`, and Hologres re-renders
+operator expressions with its own parenthesisation and explicit casts. And a `source` is
+always rebuilt as a full three-part `database.schema.table` from Hologres' `base_table`,
+so a two-part or unqualified `source` gains the missing parts.
+
 ## Development
 
 ```bash
@@ -109,3 +201,18 @@ Credentials are read only from the environment; none are stored in this reposito
 
 The `live` dependency group holds the PostgreSQL driver and is excluded from
 `default-groups`, so CI never installs a database driver it cannot use.
+
+### Fixtures
+
+The `tests/fixtures` pairs are not hand-written. Each `*_semantic_view.sql` was executed
+against a real Hologres 5.0.0 instance and the resulting view queried, and each
+`*_model_yaml.yaml` is that instance's own readback of the corresponding DDL. A live test
+re-checks the readback against the committed fixture, so if Hologres changes the shape it
+emits, the suite says so instead of quietly testing a stale format.
+
+## Future effort
+
+- Import from `ddl_text` as an alternative to `model_yaml`, for views created before
+  `model_yaml` was populated.
+- Revisit derived and ratio metrics if Hologres gains support for them.
+- Map `ai_context` synonyms if Hologres gains an AI annotation surface.
