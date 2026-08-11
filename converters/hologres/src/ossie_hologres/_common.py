@@ -355,6 +355,19 @@ def render_expression(node):
     return node.sql(dialect=SQLGLOT_DIALECT)
 
 
+def is_portable_expression(node):
+    """True if the expression carries no PostgreSQL-specific syntax.
+
+    Decided by asking sqlglot to render the node with and without the postgres dialect:
+    if both agree the expression is portable. `SUM(x)`, `COUNT(*)` and `CASE` render the
+    same either way, while `j -> 'k'`, `x ~ 'abc'` and the 1-based `arr[1]` do not.
+
+    This keeps the import direction from labelling ordinary SQL as HOLOGRES, which would
+    hide it from every other Ossie converter looking for an ANSI_SQL expression.
+    """
+    return node.sql() == node.sql(dialect=SQLGLOT_DIALECT)
+
+
 def normalize_expression(text, what="expression"):
     """Round-trip an expression through sqlglot to get its canonical form.
 

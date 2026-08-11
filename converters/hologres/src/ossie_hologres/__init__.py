@@ -29,8 +29,10 @@ Import consumes the `model_yaml` that Hologres publishes in
 
 from ._common import ConversionError
 from .ossie_to_semantic_view import convert_ossie_to_semantic_view
+from .semantic_view_to_ossie import convert_semantic_view_to_ossie
 
 __all__ = [
     "ConversionError",
     "convert_ossie_to_semantic_view",
+    "convert_semantic_view_to_ossie",
 ]
