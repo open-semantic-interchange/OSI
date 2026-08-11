@@ -20,6 +20,7 @@
 import json
 import os
 import sys
+import tempfile
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib import import_module
@@ -84,7 +85,7 @@ def _load_tom(assembly_dir):
         from pythonnet import get_runtime_info, set_runtime
     except ImportError as exc:
         raise TomUnavailableError(
-            "TOM validation requires the optional 'tom' extra; install with "
+            "TOM validation and TMDL serialization require the optional 'tom' extra; install with "
             "`pip install apache-ossie-microsoft[tom]`"
         ) from exc
 
@@ -140,6 +141,27 @@ def validate_tmsl(document, *, assembly_dir=None):
         for error in validation.Errors
     )
     return TomValidationResult(errors, True)
+
+
+def serialize_tmdl(document, *, assembly_dir=None):
+    """Serialize a TMSL mapping or JSON string into canonical TMDL documents.
+
+    Returns a mapping from each relative TMDL document path to its UTF-8 text.
+    """
+
+    raw = json.dumps(document) if isinstance(document, dict) else document
+    if not isinstance(raw, str):
+        raise TypeError("document must be a TMSL mapping or JSON string")
+
+    tom = _load_tom(_assembly_directory(assembly_dir))
+    database = tom.JsonSerializer.DeserializeDatabase(raw)
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        output = Path(temporary_directory)
+        tom.TmdlSerializer.SerializeDatabaseToFolder(database, os.fspath(output))
+        return {
+            path.relative_to(output).as_posix(): path.read_text(encoding="utf-8-sig")
+            for path in sorted(output.rglob("*.tmdl"))
+        }
 
 
 def validate_bim(path, *, assembly_dir=None):

@@ -136,6 +136,43 @@ def test_validate_tmsl_handles_success_errors_and_bad_input(tmp_path, monkeypatc
         tom.validate_tmsl([], assembly_dir=tmp_path)
 
 
+def test_serialize_tmdl_returns_canonical_folder_documents(tmp_path, monkeypatch):
+    database = object()
+
+    class JsonSerializer:
+        @staticmethod
+        def DeserializeDatabase(raw):  # noqa: N802 - mirrors TOM's managed API
+            assert json.loads(raw) == {"name": "Sales"}
+            return database
+
+    class TmdlSerializer:
+        @staticmethod
+        def SerializeDatabaseToFolder(value, output):  # noqa: N802
+            assert value is database
+            root = type(tmp_path)(output)
+            (root / "tables").mkdir()
+            (root / "model.tmdl").write_text("model Model\n", encoding="utf-8-sig")
+            (root / "tables" / "Sales.tmdl").write_text(
+                "table Sales\n", encoding="utf-8-sig"
+            )
+
+    monkeypatch.setattr(
+        tom,
+        "_load_tom",
+        lambda _directory: SimpleNamespace(
+            JsonSerializer=JsonSerializer,
+            TmdlSerializer=TmdlSerializer,
+        ),
+    )
+
+    assert tom.serialize_tmdl({"name": "Sales"}, assembly_dir=tmp_path) == {
+        "model.tmdl": "model Model\n",
+        "tables/Sales.tmdl": "table Sales\n",
+    }
+    with pytest.raises(TypeError, match="mapping or JSON string"):
+        tom.serialize_tmdl([], assembly_dir=tmp_path)
+
+
 def test_validate_bim_reads_a_bom(tmp_path, monkeypatch):
     model = tmp_path / "model.bim"
     model.write_text('{"name": "Sales"}', encoding="utf-8-sig")

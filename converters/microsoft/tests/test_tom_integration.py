@@ -59,6 +59,18 @@ def test_tpcds_export_is_tom_clean():
     assert validate_tmsl(exported, assembly_dir=ASSEMBLIES).is_valid
 
 
+def test_tmdl_export_uses_the_canonical_folder_representation(monkeypatch):
+    example = HERE.parents[2] / "examples" / "tpcds_semantic_model.yaml"
+    monkeypatch.setenv("OSSIE_MICROSOFT_TOM_ASSEMBLIES", os.fspath(ASSEMBLIES))
+
+    documents = convert_ossie_to_semantic_model(
+        example.read_text(encoding="utf-8"), output_format="TMDL"
+    )
+
+    assert {"database.tmdl", "model.tmdl"} <= documents.keys()
+    assert any(path.startswith("tables/") for path in documents)
+
+
 def test_tom_validation_catches_a_dangling_hierarchy_reference(tmp_path):
     model = json.loads(FIXTURE.read_text(encoding="utf-8-sig"))
     broken = copy.deepcopy(model)

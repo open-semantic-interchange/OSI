@@ -19,10 +19,10 @@
 
 # Apache Ossie Microsoft Converter
 
-Converts between a Microsoft Power BI / Fabric semantic model — a TMSL `model.bim`
-document — and an Apache Ossie (OSI) semantic model, in both directions. The conversion
-is a pure offline transform on parsed documents: no connection to Power BI or Fabric is
-required, and the package depends only on PyYAML.
+Converts between a Microsoft Power BI / Fabric semantic model and an Apache Ossie (OSI)
+semantic model. Power BI output is available as either a TMSL `model.bim` mapping or a
+TMDL document mapping. The conversion is offline and requires no Power BI or Fabric
+connection.
 
 ## Installation
 
@@ -31,12 +31,12 @@ cd converters/microsoft
 uv sync
 ```
 
-### Optional TOM structural validation
+### Optional TOM validation and TMDL serialization
 
 Microsoft's Tabular Object Model (TOM) can load and structurally validate exported
-`model.bim` files entirely offline. It is deliberately optional: TOM is proprietary
-Microsoft-licensed software, while conversion itself remains independent of .NET and
-depends only on the normal Python dependencies.
+`model.bim` files and serialize them to canonical TMDL entirely offline. It is
+deliberately optional because TOM is proprietary Microsoft-licensed software. TMSL
+conversion remains independent of .NET.
 
 ```bash
 uv sync --extra tom
@@ -140,7 +140,15 @@ bim = convert_ossie_to_semantic_model(
   ossie_yaml,
   source={"workspaceId": "<workspace-id>", "itemId": "<item-id>"},
 )
+
+# TMDL is a folder representation, returned as relative path -> document text.
+tmdl_documents = convert_ossie_to_semantic_model(ossie_yaml, output_format="TMDL")
+for relative_path, text in tmdl_documents.items():
+    print(relative_path, text)
 ```
+
+`output_format` accepts `"TMSL"` (the default) or `"TMDL"`, case-insensitively.
+TMDL output requires the optional TOM setup described above.
 
 Each report is emitted twice, because the two channels answer different questions:
 
@@ -379,8 +387,5 @@ itself, and an unexercised branch is an unproven report.
 
 ## Roadmap
 
-- TMDL as an alternative serialization alongside TMSL `model.bim`.
-- Optional, explicitly opt-in SQL-to-DAX translation for the subset of aggregates that
-  can be translated soundly, with a hard failure on the rest.
 - An end-to-end smoke test that deploys emitted TMSL to an Analysis Services instance,
   so the output is validated by the engine itself and not only by these tests.

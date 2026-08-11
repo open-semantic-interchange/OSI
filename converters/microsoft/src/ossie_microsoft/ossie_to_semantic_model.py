@@ -36,7 +36,7 @@ are represented in the TMSL model.
 
 import json
 import re
-
+from typing import Literal
 import yaml
 
 from . import _sql_to_dax as sql_to_dax
@@ -109,22 +109,29 @@ _DELIMITED_RE = re.compile(r'^\[([^\]]+)\]$|^"([^"]+)"$|^`([^`]+)`$')
 _QUERY_START_RE = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
 
 
-def convert_ossie_to_semantic_model(ossie_yaml_str, source=None):
-    """Convert an Apache Ossie document into a Power BI ``model.bim`` document.
+def convert_ossie_to_semantic_model(ossie_yaml_str, source: dict=None, output_format: Literal["TMSL", "TMDL"]="TMSL"):
+    """Convert an Apache Ossie document into a Power BI semantic model.
 
     Args:
         ossie_yaml_str: The Apache Ossie document as YAML text. A parsed mapping is
             also accepted for compatibility with existing library callers.
         source: Optional OneLake location for generated Direct Lake partitions, as
             ``{"workspaceId": ..., "itemId": ...}``.
+        output_format: ``"TMSL"`` (the default) for a ``model.bim`` mapping, or
+            ``"TMDL"`` for a mapping of relative ``.tmdl`` paths to document text.
 
     Returns:
-        The TMSL ``model.bim`` document as a dict, ready to be serialized as JSON.
+        The TMSL model mapping or TMDL document mapping selected by ``output_format``.
 
     Raises:
         TypeError: if the input is neither YAML text nor a parsed document.
-        ValueError: if the document contains no semantic model.
+        ValueError: if the document contains no semantic model or the output format is
+            unsupported.
     """
+    normalized_format = str(output_format).upper()
+    if normalized_format not in {"TMSL", "TMDL"}:
+        raise ValueError("output_format must be 'TMSL' or 'TMDL'")
+
     document = (
         yaml.safe_load(ossie_yaml_str)
         if isinstance(ossie_yaml_str, str)
@@ -197,7 +204,12 @@ def convert_ossie_to_semantic_model(ossie_yaml_str, source=None):
         DIRECT_LAKE_COMPATIBILITY_LEVEL if generated_partitions else DEFAULT_COMPATIBILITY_LEVEL,
     )
     bim["model"] = model
-    return bim
+    if normalized_format == "TMSL":
+        return bim
+
+    from .tom import serialize_tmdl
+
+    return serialize_tmdl(bim)
 
 
 # ---------------------------------------------------------------------------

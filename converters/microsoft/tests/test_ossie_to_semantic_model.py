@@ -105,6 +105,34 @@ def test_only_the_first_model_is_converted():
     assert len(bim["model"]["tables"]) == 1
 
 
+def test_tmsl_is_the_default_and_can_be_selected_explicitly():
+    document = {"version": OSSIE_VERSION, "semantic_model": [_minimal()]}
+
+    assert convert_ossie_to_semantic_model(document) == convert_ossie_to_semantic_model(
+        document, output_format="tmsl"
+    )
+
+
+def test_tmdl_serializes_the_completed_tmsl_model(monkeypatch):
+    document = {"version": OSSIE_VERSION, "semantic_model": [_minimal()]}
+    expected = {"model.tmdl": "model Model\n"}
+    received = []
+
+    def fake_serialize_tmdl(tmsl):
+        received.append(tmsl)
+        return expected
+
+    monkeypatch.setattr("ossie_microsoft.tom.serialize_tmdl", fake_serialize_tmdl)
+
+    assert convert_ossie_to_semantic_model(document, output_format="tmdl") == expected
+    assert received[0]["model"]["tables"][0]["name"] == "T"
+
+
+def test_an_unknown_output_format_is_rejected():
+    with pytest.raises(ValueError, match="output_format must be 'TMSL' or 'TMDL'"):
+        convert_ossie_to_semantic_model({}, output_format="xmla")
+
+
 # --- structure -------------------------------------------------------------
 
 
