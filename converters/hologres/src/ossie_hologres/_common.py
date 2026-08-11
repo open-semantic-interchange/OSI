@@ -206,19 +206,24 @@ def is_simple_identifier(text):
     return isinstance(text, str) and bool(_BARE_IDENTIFIER_RE.match(text.strip()))
 
 
-def quote_identifier(name, what):
-    """Render `name` as a SQL identifier, double-quoting it only when necessary.
+def needs_quoting(name):
+    """True if `name` must be double-quoted to be a valid SQL identifier.
 
-    Quoting is required for anything that is not already a bare lower-case identifier
-    (PostgreSQL folds unquoted identifiers to lower case) and for reserved keywords,
-    which are a syntax error when left bare.
+    Anything not already a bare lower-case identifier needs quoting because PostgreSQL
+    folds unquoted identifiers to lower case, and reserved keywords need it because they
+    are a syntax error when left bare.
     """
+    return not is_simple_identifier(name) or name.strip() in _RESERVED_WORDS
+
+
+def quote_identifier(name, what):
+    """Render `name` as a SQL identifier, double-quoting it only when necessary."""
     if not isinstance(name, str) or not name.strip():
         raise ConversionError(f"{what}: identifier must be a non-empty string")
     name = name.strip()
     if "\x00" in name:
         raise ConversionError(f"{what}: identifier contains a NUL byte")
-    if is_simple_identifier(name) and name not in _RESERVED_WORDS:
+    if not needs_quoting(name):
         return name
     escaped = name.replace('"', '""')
     return f'"{escaped}"'
@@ -390,6 +395,16 @@ def assert_row_level(node, what):
             )
 
 
+def _apply_quoting(identifier):
+    """Force `quoted` on a sqlglot identifier that cannot be emitted bare.
+
+    sqlglot's generator does not quote reserved words, so without this a column named
+    `user` on an alias named `order` renders as the invalid `order.user`.
+    """
+    if identifier is not None and not identifier.args.get("quoted") and needs_quoting(identifier.name):
+        identifier.set("quoted", True)
+
+
 def qualify_columns(node, alias, known_aliases, what):
     """Qualify every column in `node` with `alias`, in place.
 
@@ -401,7 +416,7 @@ def qualify_columns(node, alias, known_aliases, what):
     for col in node.find_all(exp.Column):
         qualifier = col.table
         if not qualifier:
-            col.set("table", exp.to_identifier(alias))
+            col.set("table", exp.to_identifier(alias, quoted=needs_quoting(alias)))
         elif qualifier != alias:
             if qualifier in known_aliases:
                 raise ConversionError(
@@ -412,6 +427,9 @@ def qualify_columns(node, alias, known_aliases, what):
                 f"{what}: references unknown table '{qualifier}' "
                 f"(known tables: {', '.join(sorted(known_aliases))})"
             )
+        else:
+            _apply_quoting(col.args.get("table"))
+        _apply_quoting(col.this)
     return node
 
 

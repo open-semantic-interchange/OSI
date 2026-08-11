@@ -15,22 +15,23 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Bidirectional converter between Apache Ossie semantic models and Alibaba Cloud
-Hologres Semantic Views (Hologres V5.0.0+). Pure offline string-in / string-out
-transforms.
+"""Shared test helpers."""
 
-Export produces `CREATE SEMANTIC VIEW` DDL text rather than YAML, because Hologres has
-no YAML import function -- the DDL is the only way to (re)create a Semantic View.
-Import consumes the `model_yaml` that Hologres publishes in
-`hologres.hg_semantic_view_properties`.
+import pathlib
 
-    from ossie_hologres import convert_ossie_to_semantic_view, convert_semantic_view_to_ossie
-"""
+FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
 
-from ._common import ConversionError
-from .ossie_to_semantic_view import convert_ossie_to_semantic_view
+# The canonical example models live at the repository root, not inside this converter.
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+EXAMPLES = REPO_ROOT / "examples"
+VALIDATOR = REPO_ROOT / "validation" / "validate.py"
+SCHEMA = REPO_ROOT / "core-spec" / "osi-schema.json"
 
-__all__ = [
-    "ConversionError",
-    "convert_ossie_to_semantic_view",
-]
+
+def read_fixture(name):
+    return (FIXTURES / name).read_text(encoding="utf-8")
+
+
+def ossie_doc(model):
+    """Wrap a single semantic model in a minimal valid Apache Ossie document."""
+    return {"version": "0.2.0.dev0", "semantic_model": [model]}
