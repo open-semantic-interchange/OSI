@@ -66,6 +66,7 @@ DIALECT_MAP = {
     "SNOWFLAKE": "snowflake",
     "DATABRICKS": "databricks",
     "BIGQUERY": "bigquery",
+    "HOLOGRES": "postgres",  # Hologres is PostgreSQL-compatible
     "MDX": None,  # Not supported by sqlglot, skip validation
     "TABLEAU": None,  # Not supported by sqlglot, skip validation
     "MAQL": None,  # Not supported by sqlglot, skip validation
