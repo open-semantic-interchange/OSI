@@ -31,6 +31,54 @@ its Semantic View definitions in different formats:
 - **Import (Hologres -> Ossie)** consumes the **`model_yaml`** that Hologres publishes
   for every Semantic View in the `hologres.hg_semantic_view_properties` system table.
 
+## Installation
+
+```bash
+uv sync
+```
+
+## Usage
+
+### Command line
+
+Export an Apache Ossie model to DDL and run it:
+
+```bash
+ossie-hologres export -i model.yaml -o view.sql
+psql -h <endpoint> -p 80 -U <user> -d <db> -f view.sql
+```
+
+Import an existing Semantic View back into Apache Ossie. Hologres publishes the
+structured model for every Semantic View in a system table:
+
+```bash
+psql -h <endpoint> -p 80 -U <user> -d <db> -At -c \
+  "SELECT property_value FROM hologres.hg_semantic_view_properties
+   WHERE schema_name = current_schema()
+     AND view_name = 'sales_sv' AND property_key = 'model_yaml';" > model_yaml.yaml
+
+ossie-hologres import -i model_yaml.yaml -o model.yaml
+```
+
+Export options:
+
+| Option | Purpose |
+|--------|---------|
+| `--schema` | Schema for the view, and a default for datasets whose `source` has none. Never overrides a schema already written into a `source`. |
+| `--database` | Assert the database the dataset sources belong to. |
+| `--drop-if-exists` | Prefix a `DROP SEMANTIC VIEW IF EXISTS`. Hologres has no `CREATE OR REPLACE` or `ALTER`, so this is how a definition is changed. |
+| `--metric-owner METRIC=DATASET` | Name the table a metric belongs to, for metrics whose expression has no qualified column to infer it from (`COUNT(*)`). Repeatable. |
+| `--skip-unsupported-metrics` | Warn about and skip metrics with no Semantic View form instead of failing. |
+
+### Python API
+
+```python
+from ossie_hologres import convert_ossie_to_semantic_view, convert_semantic_view_to_ossie
+
+ddl = convert_ossie_to_semantic_view(ossie_yaml, schema="public")
+ossie_yaml = convert_semantic_view_to_ossie(model_yaml)
+```
+
 ## Development
 
 ```bash
@@ -39,4 +87,4 @@ uv run pytest
 ```
 
 The live tests against a real Hologres instance are skipped unless the `HOLOGRES_*`
-environment variables are set. See the Development section below once implemented.
+environment variables are set.
