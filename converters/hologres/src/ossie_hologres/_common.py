@@ -368,6 +368,34 @@ def is_portable_expression(node):
     return node.sql() == node.sql(dialect=SQLGLOT_DIALECT)
 
 
+# Top-level expression forms the CREATE SEMANTIC VIEW grammar accepts unparenthesised.
+# Verified against Hologres 5.0.0: a bare operator at the top level of a definition is a
+# syntax error there -- `a || b`, `a + 1` and `a::text` are all rejected while `(a || b)`,
+# `(a + 1)` and `cast(a as text)` are accepted -- even though the same operators are fine
+# inside a function call's argument list.
+_BARE_DEFINITION_FORMS = (
+    exp.Column,
+    exp.Literal,
+    exp.Boolean,
+    exp.Null,
+    exp.Func,
+    exp.Case,
+    exp.Paren,
+)
+
+
+def render_definition(node):
+    """Render an expression for a DIMENSIONS or METRICS definition clause.
+
+    Adds the parentheses the Hologres DDL grammar requires around a top-level operator,
+    and leaves everything else alone so ordinary definitions stay readable.
+    """
+    sql = render_expression(node)
+    if isinstance(node, _BARE_DEFINITION_FORMS):
+        return sql
+    return f"({sql})"
+
+
 def normalize_expression(text, what="expression"):
     """Round-trip an expression through sqlglot to get its canonical form.
 

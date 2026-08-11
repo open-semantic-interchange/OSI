@@ -46,7 +46,7 @@ from ._common import (
     quote_identifier,
     quote_literal,
     read_stash,
-    render_expression,
+    render_definition,
     require_str,
 )
 
@@ -378,7 +378,7 @@ def _render_dimensions(datasets, aliases):
 
             entry = (
                 f"{quote_identifier(alias, what)}.{quote_identifier(field_name, what)} "
-                f"AS {render_expression(node)}"
+                f"AS {render_definition(node)}"
             )
             comment = merge_description(field.get("description"), field.get("ai_context"))
             if comment:
@@ -454,7 +454,7 @@ def _render_metrics(model, aliases, metric_owners, skip_unsupported):
 
         entry = (
             f"{quote_identifier(owner, what)}.{quote_identifier(metric_name, what)} "
-            f"AS {render_expression(node)}"
+            f"AS {render_definition(node)}"
         )
         comment = merge_description(metric.get("description"), metric.get("ai_context"))
         if comment:

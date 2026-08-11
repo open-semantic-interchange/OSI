@@ -81,7 +81,8 @@ class TestMetricOwnerOption:
         assert "--metric-owner" in capsys.readouterr().err
 
     def test_skip_unsupported_metrics_drops_it_instead(self, tmp_path, capsys):
-        code = main(["export", "-i", str(self._model(tmp_path)), "--skip-unsupported-metrics"])
+        with pytest.warns(UserWarning, match="skipped"):
+            code = main(["export", "-i", str(self._model(tmp_path)), "--skip-unsupported-metrics"])
         assert code == 0
         assert "METRICS" not in capsys.readouterr().out
 

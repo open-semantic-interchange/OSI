@@ -309,9 +309,10 @@ class TestDimensions:
 
     def test_multi_column_expression_is_fully_qualified(self):
         # The naive "only prefix a bare identifier" rule would emit unqualified columns
-        # here, which Hologres cannot resolve.
+        # here, which Hologres cannot resolve. The parentheses are required too -- see
+        # TestDefinitionParentheses.
         ddl = export(one_table(fields=[field("full_name", "first_name || ' ' || last_name")]))
-        assert "o.full_name AS o.first_name || ' ' || o.last_name" in ddl
+        assert "o.full_name AS (o.first_name || ' ' || o.last_name)" in ddl
 
     def test_description_becomes_a_comment(self):
         ddl = export(one_table(fields=[field("d", "x", description="A dim")]))
@@ -372,6 +373,54 @@ class TestDimensions:
             ]
         )
         assert "o.d AS CAST(o.x AS TEXT)" in export(model)
+
+
+class TestDefinitionParentheses:
+    """The Hologres DDL grammar rejects a bare top-level operator in a definition.
+
+    Verified against Hologres 5.0.0: `a || b`, `a + 1` and `a::text` are all syntax
+    errors in a DIMENSIONS clause, while the parenthesised forms and function calls are
+    accepted. The same operators are fine inside a function call's argument list.
+    """
+
+    def _dim(self, expr):
+        return export(one_table(fields=[field("d", expr)]))
+
+    @pytest.mark.parametrize(
+        ("expr", "expected"),
+        [
+            ("a || b", "(o.a || o.b)"),
+            ("a + 1", "(o.a + 1)"),
+            ("a - b", "(o.a - o.b)"),
+            ("a > 1", "(o.a > 1)"),
+        ],
+    )
+    def test_top_level_operators_are_parenthesised(self, expr, expected):
+        assert f"o.d AS {expected}" in self._dim(expr)
+
+    @pytest.mark.parametrize(
+        ("expr", "expected"),
+        [
+            # A plain column, a function call and a CASE are all accepted bare, so they
+            # are left unwrapped to keep the DDL readable.
+            ("region", "o.region"),
+            ("upper(region)", "UPPER(o.region)"),
+            ("concat(a, b)", "CONCAT(o.a, o.b)"),
+            ("CASE WHEN a > 1 THEN 'x' ELSE 'y' END", "CASE WHEN o.a > 1 THEN 'x' ELSE 'y' END"),
+            # sqlglot rewrites the PostgreSQL cast shorthand into CAST(...), which is a
+            # function call and therefore already acceptable bare.
+            ("a::text", "CAST(o.a AS TEXT)"),
+        ],
+    )
+    def test_forms_accepted_bare_are_not_wrapped(self, expr, expected):
+        assert f"o.d AS {expected}" in self._dim(expr)
+
+    def test_an_operator_inside_a_function_call_needs_no_extra_wrapping(self):
+        assert "o.d AS UPPER(o.a || o.b)" in self._dim("upper(a || b)")
+
+    def test_metrics_are_function_calls_and_stay_unwrapped(self):
+        ddl = export(one_table(metrics=[metric("m", "SUM(o.a + o.b)")]))
+        assert "o.m AS SUM(o.a + o.b)" in ddl
 
 
 class TestMetrics:

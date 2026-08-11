@@ -49,6 +49,7 @@ from ._common import (
     parse_expression,
     render_expression,
     require_str,
+    strip_parens,
     unqualify_columns,
     write_stash,
 )
@@ -135,7 +136,9 @@ def _convert_dimension(dim, alias, table_what):
 
     # Hologres always writes dimension expressions alias-qualified (`o.region`). Ossie
     # field expressions are conventionally bare column names, so drop the owning alias.
-    node = unqualify_columns(parse_expression(expr_text, what), alias)
+    # The outer parentheses the export direction adds to satisfy the DDL grammar come
+    # back in model_yaml, so drop those too rather than accumulating them.
+    node = unqualify_columns(strip_parens(parse_expression(expr_text, what)), alias)
 
     field = {"name": name, "expression": _expression_for(node)}
     description = dim.get("description")
