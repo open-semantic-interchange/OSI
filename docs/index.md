@@ -59,7 +59,7 @@ The Ossie core specification (current version: **0.2.0.dev0**, latest released: 
 | **Custom Extensions** | Vendor-specific metadata stored as JSON, allowing platforms to carry additional information without breaking core compatibility. |
 | **AI Context** | Optional annotations at every level (model, dataset, field, relationship, metric) to help AI tools understand business meaning — including instructions, synonyms, and example queries. |
 
-The specification supports multiple SQL dialects (`ANSI_SQL`, `SNOWFLAKE`, `DATABRICKS`, `MDX`, `TABLEAU`) so that expressions can be tailored to each platform while maintaining a common model structure.
+The specification supports multiple SQL dialects (`ANSI_SQL`, `SNOWFLAKE`, `DATABRICKS`, `BIGQUERY`, `HOLOGRES`, `MAQL`, `MDX`, `TABLEAU`) so that expressions can be tailored to each platform while maintaining a common model structure.
 
 For the full specification, see [core-spec/spec.md](../core-spec/spec.md). For validation tooling, see [validation/validate.py](../validation/validate.py). For a complete example, see the [TPC-DS semantic model](../examples/tpcds_semantic_model.yaml).
 

@@ -669,6 +669,12 @@ expression:
 | Current timestamp | `CURRENT_TIMESTAMP` | `CURRENT_TIMESTAMP()` | `CURRENT_TIMESTAMP()` | `CURRENT_TIMESTAMP()` | `CURRENT_TIMESTAMP` |
 | Substring | `SUBSTRING(s, start, len)` | `SUBSTR(s, start, len)` | `SUBSTR(s, start, len)` | `SUBSTRING(s, start, len)` | `SUBSTRING(s, start, len)` |
 
+The `HOLOGRES` dialect follows the PostgreSQL column: Alibaba Cloud Hologres is
+PostgreSQL wire- and dialect-compatible. Prefer `ANSI_SQL` for expressions that need no
+PostgreSQL-specific syntax, and reserve `HOLOGRES` for the ones that do — such as `a || b`
+for string concatenation, `j -> 'k'` for JSON access, `s ~ 'pattern'` for regular
+expression matching, or the 1-based `arr[1]` array indexing.
+
 ### 
 
 ### Dialect-Specific Extensions
