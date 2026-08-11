@@ -3,7 +3,7 @@ description: Single-table order analysis
 tables:
 - name: o
   base_table:
-    database: test50
+    database: retail
     schema: public
     table: svacc_orders
   primary_key:

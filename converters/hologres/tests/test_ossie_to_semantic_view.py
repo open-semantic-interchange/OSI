@@ -148,7 +148,7 @@ class TestSourceParsing:
     @pytest.mark.parametrize(
         ("source", "expected"),
         [
-            ("test50.public.orders", "public.orders"),
+            ("retail.public.orders", "public.orders"),
             ("public.orders", "public.orders"),
             ("orders", "orders"),
         ],

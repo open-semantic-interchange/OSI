@@ -86,5 +86,26 @@ uv sync
 uv run pytest
 ```
 
-The live tests against a real Hologres instance are skipped unless the `HOLOGRES_*`
-environment variables are set.
+### Live tests
+
+A `CREATE SEMANTIC VIEW` statement can only really be validated by a Hologres server, so
+the suite includes end-to-end tests that create a view, query it, and read the model back.
+They are skipped unless the connection environment variables are set, which keeps CI and a
+plain `uv run pytest` hermetic:
+
+```bash
+export HOLOGRES_HOST=<endpoint>
+export HOLOGRES_PORT=80
+export HOLOGRES_USER='BASIC$account'   # single quotes: the $ is literal
+export HOLOGRES_PASSWORD='<password>'
+export HOLOGRES_DB=<database>
+
+uv sync --group live
+uv run pytest -m live -v
+```
+
+The tests create everything inside an `ossie_hologres_it` schema and drop it afterwards.
+Credentials are read only from the environment; none are stored in this repository.
+
+The `live` dependency group holds the PostgreSQL driver and is excluded from
+`default-groups`, so CI never installs a database driver it cannot use.

@@ -4,7 +4,7 @@ semantic_model:
     description: Single-table order analysis
     datasets:
       - name: o
-        source: test50.public.svacc_orders
+        source: retail.public.svacc_orders
         primary_key: [order_id]
         fields:
           - name: region_dim

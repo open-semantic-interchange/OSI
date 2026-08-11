@@ -4,7 +4,7 @@ semantic_model:
     description: 销售分析语义视图
     datasets:
       - name: o
-        source: test50.public.svacc_orders
+        source: retail.public.svacc_orders
         primary_key: [order_id]
         fields:
           - name: region_dim
@@ -18,7 +18,7 @@ semantic_model:
                 - dialect: ANSI_SQL
                   expression: status
       - name: c
-        source: test50.public.svacc_customers
+        source: retail.public.svacc_customers
         primary_key: [customer_id]
         fields:
           - name: city_dim
@@ -28,7 +28,7 @@ semantic_model:
                   expression: city
             description: 客户城市
       - name: i
-        source: test50.public.svacc_order_items
+        source: retail.public.svacc_order_items
         primary_key: [item_id]
     relationships:
       - name: rel_oc

@@ -3,7 +3,7 @@ description: 销售分析语义视图
 tables:
 - name: o
   base_table:
-    database: test50
+    database: retail
     schema: public
     table: svacc_orders
   primary_key:
@@ -21,7 +21,7 @@ tables:
     expr: "count(*)"
 - name: c
   base_table:
-    database: test50
+    database: retail
     schema: public
     table: svacc_customers
   primary_key:
@@ -38,7 +38,7 @@ tables:
     expr: avg(c.credit_limit)
 - name: i
   base_table:
-    database: test50
+    database: retail
     schema: public
     table: svacc_order_items
   primary_key:
