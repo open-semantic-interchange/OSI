@@ -58,7 +58,6 @@ Supported SQL and expression language dialects for metrics and field definitions
 | `DATABRICKS` | Databricks SQL |
 | `MAQL` | GoodData MAQL (Metric Analysis and Query Language) |
 | `BIGQUERY` | Google BigQuery (GoogleSQL) |
-| `HOLOGRES` | Alibaba Cloud Hologres (PostgreSQL-compatible) |
 
 ### Data types
 

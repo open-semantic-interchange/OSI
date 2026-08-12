@@ -32,7 +32,6 @@ class OSIDialect(str, Enum):
     TABLEAU = "TABLEAU"
     DATABRICKS = "DATABRICKS"
     BIGQUERY = "BIGQUERY"
-    HOLOGRES = "HOLOGRES"
 
 
 class OSIDataType(str, Enum):
