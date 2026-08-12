@@ -211,7 +211,9 @@ class OSIDocument(BaseModel):
     version: str = "0.2.0.dev0"
     dialects: Optional[list[OSIDialect]] = None
     vendors: Optional[list[OSIVendor]] = None
+    ai_context: Optional[OSIAIContext] = None
     semantic_model: list[OSISemanticModel]
+    custom_extensions: Optional[list[OSICustomExtension]] = None
 
     def to_osi_yaml(self, **kwargs: Any) -> str:
         """Serialize to Ossie-compliant YAML (uses field aliases and excludes None values)."""
