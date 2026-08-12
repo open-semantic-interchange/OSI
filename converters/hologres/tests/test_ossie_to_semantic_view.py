@@ -355,24 +355,29 @@ class TestDimensions:
         model = one_table(
             fields=[{"name": "d", "expression": {"dialects": [{"dialect": "MDX", "expression": "[x]"}]}}]
         )
-        with pytest.raises(ConversionError, match="no HOLOGRES or ANSI_SQL"):
+        with pytest.raises(ConversionError, match="no ANSI_SQL"):
             export(model)
 
-    def test_hologres_dialect_wins_over_ansi(self):
+    def test_non_ansi_dialects_are_ignored(self):
         model = one_table(
             fields=[
                 {
                     "name": "d",
                     "expression": {
                         "dialects": [
+                            {"dialect": "SNOWFLAKE", "expression": "x::varchar"},
                             {"dialect": "ANSI_SQL", "expression": "x"},
-                            {"dialect": "HOLOGRES", "expression": "x::text"},
                         ]
                     },
                 }
             ]
         )
-        assert "o.d AS CAST(o.x AS TEXT)" in export(model)
+        assert "o.d AS o.x" in export(model)
+
+    def test_postgres_cast_shorthand_is_normalized_to_standard_cast(self):
+        # Hologres accepts `x::text`, but the portable spelling is always available and
+        # sqlglot rewrites to it, which is why no vendor dialect token is needed.
+        assert "o.d AS CAST(o.x AS TEXT)" in export(one_table(fields=[field("d", "x::text")]))
 
 
 class TestDefinitionParentheses:

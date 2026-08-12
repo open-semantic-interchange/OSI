@@ -148,12 +148,21 @@ class TestDimensions:
         expr = self._field("o.first || ' ' || o.last")["expression"]["dialects"][0]["expression"]
         assert expr == "first || ' ' || last"
 
-    def test_portable_expression_is_labelled_ansi(self):
+    def test_expressions_are_labelled_ansi(self):
         assert self._field("o.region")["expression"]["dialects"][0]["dialect"] == "ANSI_SQL"
 
-    def test_postgres_specific_expression_is_labelled_hologres(self):
-        # `->` is PostgreSQL JSON access; labelling it ANSI_SQL would misrepresent it.
-        assert self._field("o.payload -> 'k'")["expression"]["dialects"][0]["dialect"] == "HOLOGRES"
+    def test_postgres_only_syntax_is_still_labelled_ansi(self):
+        # `->` is PostgreSQL JSON access, so the label is not strictly accurate. It is
+        # still the better trade: a converter that finds no ANSI_SQL expression drops the
+        # field outright, whereas this at worst surfaces as a SQL error on the target.
+        field = self._field("o.payload -> 'k'")
+        assert field["expression"]["dialects"][0]["dialect"] == "ANSI_SQL"
+        assert field["expression"]["dialects"][0]["expression"] == "payload -> 'k'"
+
+    def test_postgres_cast_shorthand_becomes_a_standard_cast(self):
+        # The portable spelling is available, so no vendor dialect is needed to carry it.
+        expr = self._field("o.region::text")["expression"]["dialects"][0]
+        assert expr == {"dialect": "ANSI_SQL", "expression": "CAST(region AS TEXT)"}
 
     def test_description_is_carried_over(self):
         assert self._field("o.region", description="A region")["description"] == "A region"

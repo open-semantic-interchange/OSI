@@ -39,11 +39,19 @@ from sqlglot import exp
 # Apache Ossie files.
 OSSIE_VERSION = "0.2.0.dev0"
 
-# Vendor id used for the `custom_extensions` stash and for dialect selection.
+# Vendor id used for the `custom_extensions` stash. This is a vendor name, not a
+# dialect: the Ossie Vendor field is free-form, so it needs no spec change.
 VENDOR = "HOLOGRES"
 
-# Expression dialects this converter understands, in preference order.
-DIALECT_HOLOGRES = "HOLOGRES"
+# The only expression dialect this converter reads or writes.
+#
+# Hologres is PostgreSQL-compatible, but that does not justify a vendor dialect token:
+# the portable spellings are almost always available (`CAST(x AS TEXT)` rather than
+# `x::text`), and sqlglot normalizes to them. For the genuinely PostgreSQL-only syntax
+# that remains, tagging it as a vendor dialect would be worse than labelling it
+# ANSI_SQL, because a converter looking for an ANSI_SQL expression and finding none
+# drops the field entirely. So, as the NVIDIA GSF converter puts it, anything else
+# stays ANSI_SQL rather than being labelled inaccurately.
 DIALECT_ANSI = "ANSI_SQL"
 
 # Hologres is PostgreSQL wire- and dialect-compatible, so sqlglot parses and
@@ -293,16 +301,16 @@ def foreign_vendor_extensions(obj):
 
 
 def pick_expression(ossie_expression):
-    """Choose the SQL string for an Apache Ossie expression: HOLOGRES, else ANSI_SQL.
+    """Choose the SQL string for an Apache Ossie expression.
 
-    Returns None if neither dialect is present, so the caller can raise with the name of
-    the offending field or metric.
+    Returns None if there is no ANSI_SQL dialect, so the caller can raise with the name
+    of the offending field or metric.
     """
     dialects = {
         d.get("dialect"): d.get("expression")
         for d in (ossie_expression or {}).get("dialects") or []
     }
-    expr = dialects.get(DIALECT_HOLOGRES) or dialects.get(DIALECT_ANSI)
+    expr = dialects.get(DIALECT_ANSI)
     if expr is not None and not isinstance(expr, str):
         raise ConversionError(f"expression must be a string, got {type(expr).__name__}")
     return expr
@@ -353,19 +361,6 @@ def parse_expression(text, what):
 def render_expression(node):
     """Serialize a sqlglot node back to Hologres-compatible SQL."""
     return node.sql(dialect=SQLGLOT_DIALECT)
-
-
-def is_portable_expression(node):
-    """True if the expression carries no PostgreSQL-specific syntax.
-
-    Decided by asking sqlglot to render the node with and without the postgres dialect:
-    if both agree the expression is portable. `SUM(x)`, `COUNT(*)` and `CASE` render the
-    same either way, while `j -> 'k'`, `x ~ 'abc'` and the 1-based `arr[1]` do not.
-
-    This keeps the import direction from labelling ordinary SQL as HOLOGRES, which would
-    hide it from every other Ossie converter looking for an ANSI_SQL expression.
-    """
-    return node.sql() == node.sql(dialect=SQLGLOT_DIALECT)
 
 
 # Top-level expression forms the CREATE SEMANTIC VIEW grammar accepts unparenthesised.

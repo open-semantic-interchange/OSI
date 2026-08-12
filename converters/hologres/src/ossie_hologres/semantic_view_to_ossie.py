@@ -37,13 +37,11 @@ Ossie dataset-qualified metric expression.
 
 from ._common import (
     DIALECT_ANSI,
-    DIALECT_HOLOGRES,
     OSSIE_VERSION,
     STASH_OWNER,
     ConversionError,
     column_refs,
     dump_yaml,
-    is_portable_expression,
     load_yaml,
     ossie_expression,
     parse_expression,
@@ -176,14 +174,18 @@ def _convert_metrics(table, alias, view_name):
 
 
 def _expression_for(node):
-    """Label an expression with the narrowest dialect that honestly describes it.
+    """Wrap a rendered expression in an Apache Ossie expression block.
 
-    Anything that renders the same outside the postgres dialect is portable and gets
-    ANSI_SQL, so an ordinary `SUM(o.amount)` stays usable by every other Ossie
-    converter. Only genuinely PostgreSQL-specific syntax is labelled HOLOGRES.
+    Everything is labelled ANSI_SQL. Hologres is PostgreSQL-compatible and the portable
+    spelling is nearly always available -- `CAST(x AS TEXT)` rather than `x::text`, which
+    is what sqlglot normalizes to anyway -- so a vendor dialect label would buy very
+    little. For the PostgreSQL-only syntax that does remain, such as `j -> 'k'`, a vendor
+    label would actively hurt: a converter looking for an ANSI_SQL expression and finding
+    none drops the field, whereas an inaccurate ANSI_SQL label at worst surfaces as a SQL
+    error on the target engine. Deciding this per expression was also tried and abandoned;
+    sqlglot's default dialect is not ANSI SQL, so any such test mislabels both ways.
     """
-    dialect = DIALECT_ANSI if is_portable_expression(node) else DIALECT_HOLOGRES
-    return ossie_expression(render_expression(node), dialect)
+    return ossie_expression(render_expression(node), DIALECT_ANSI)
 
 
 def _convert_relationships(view, aliases, view_name):

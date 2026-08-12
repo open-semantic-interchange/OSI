@@ -370,7 +370,7 @@ def _render_dimensions(datasets, aliases):
             expr_text = pick_expression(field.get("expression"))
             if expr_text is None:
                 raise ConversionError(
-                    f"{what}: no HOLOGRES or ANSI_SQL expression dialect available"
+                    f"{what}: no ANSI_SQL expression dialect available"
                 )
             node = parse_expression(expr_text, what)
             assert_row_level(node, what)
@@ -439,7 +439,7 @@ def _render_metrics(model, aliases, metric_owners, skip_unsupported):
             expr_text = pick_expression(metric.get("expression"))
             if expr_text is None:
                 raise ConversionError(
-                    f"{what}: no HOLOGRES or ANSI_SQL expression dialect available"
+                    f"{what}: no ANSI_SQL expression dialect available"
                 )
             node = parse_expression(expr_text, what)
             metric_aggregate(node, what)

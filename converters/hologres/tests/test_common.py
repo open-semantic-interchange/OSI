@@ -22,7 +22,6 @@ import json
 import pytest
 from ossie_hologres._common import (
     DIALECT_ANSI,
-    DIALECT_HOLOGRES,
     ConversionError,
     assert_row_level,
     column_refs,
@@ -188,15 +187,18 @@ class TestPickExpression:
     def _expr(self, *pairs):
         return {"dialects": [{"dialect": d, "expression": e} for d, e in pairs]}
 
-    def test_prefers_hologres_over_ansi(self):
-        expr = self._expr((DIALECT_ANSI, "region"), (DIALECT_HOLOGRES, "region::text"))
-        assert pick_expression(expr) == "region::text"
-
-    def test_falls_back_to_ansi(self):
+    def test_selects_the_ansi_dialect(self):
         assert pick_expression(self._expr((DIALECT_ANSI, "region"))) == "region"
 
-    def test_returns_none_when_no_usable_dialect(self):
+    def test_selects_ansi_from_among_several_dialects(self):
+        expr = self._expr(("SNOWFLAKE", "region::varchar"), (DIALECT_ANSI, "region"))
+        assert pick_expression(expr) == "region"
+
+    def test_returns_none_when_no_ansi_dialect(self):
+        # This converter introduces no dialect token of its own, so anything that is not
+        # ANSI_SQL is simply not usable here.
         assert pick_expression(self._expr(("MDX", "[Region]"))) is None
+        assert pick_expression(self._expr(("HOLOGRES", "region::text"))) is None
         assert pick_expression({}) is None
         assert pick_expression(None) is None
 

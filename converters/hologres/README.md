@@ -119,6 +119,21 @@ references. `COUNT(*)` references none, so it needs an explicit owner via a
 `custom_extensions` entry or `--metric-owner`; the converter refuses to guess, because
 picking the wrong owner silently changes the number under a fan-out join.
 
+**Expressions are read and written as `ANSI_SQL` only.** This converter introduces no
+dialect token of its own, so it needs no change to the core spec. Hologres is
+PostgreSQL-compatible, but that alone does not justify one: the portable spelling is
+nearly always available and sqlglot normalizes to it, so `x::text` becomes
+`CAST(x AS TEXT)` in both directions.
+
+For the PostgreSQL-only syntax that does remain -- `j -> 'k'`, `s ~ 'pattern'`, the
+1-based `arr[1]` -- the `ANSI_SQL` label is not strictly accurate. It is still the better
+trade. A converter that looks for an `ANSI_SQL` expression and finds none *drops the
+field* (see `converters/databricks`), so over-labelling loses data silently, whereas an
+optimistic label at worst surfaces as a SQL error on the target engine. Deciding this per
+expression was tried and abandoned: sqlglot's default dialect is not ANSI SQL, so any such
+test mislabels in both directions -- passing `ILIKE` as portable while flagging the
+standard `SUBSTRING`, `EXTRACT` and `DATE_TRUNC` as vendor-specific.
+
 ## Requirements
 
 Hologres V5.0.0 or later, with `hg_enable_semantic_view_query` on (the default). Confirm
