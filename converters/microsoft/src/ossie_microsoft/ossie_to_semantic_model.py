@@ -27,6 +27,8 @@ Power BI evaluates DAX. An expression that cannot be translated is emitted as
 ``BLANK()`` so its calculated column or measure remains in the model, while its original
 dialect and expression are stored as annotations on that object.
 
+The semantic model is created in Direct Lake mode and the ``source`` argument is used to generate the shared M expression for all Direct Lake partitions. 
+
 The ``ai_context`` values are saved as annotations on the semantic model object. Relationships which
 depend on multiple columns are not supported in Power BI and are skipped. The ``primary_key`` and
 ``unique_keys`` are stored as annotations on the semantic model object, but only single-column keys
