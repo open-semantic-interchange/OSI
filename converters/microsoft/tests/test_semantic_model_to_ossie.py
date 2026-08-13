@@ -107,9 +107,16 @@ def test_model_name_and_description(model):
     assert model["description"] == "Retail sales semantic model"
 
 
-def test_rejects_non_dict_input():
-    with pytest.raises(TypeError):
-        convert_semantic_model_to_ossie("not a dict")
+def test_accepts_model_bim_json_text():
+    document = {"name": "x", "model": {"tables": []}}
+    assert convert_semantic_model_to_ossie(json.dumps(document)) == (
+        convert_semantic_model_to_ossie(document)
+    )
+
+
+def test_rejects_input_that_is_neither_a_mapping_nor_text():
+    with pytest.raises(TypeError, match="model.bim JSON text"):
+        convert_semantic_model_to_ossie(["not a model"])
 
 
 def test_rejects_document_without_model():

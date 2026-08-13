@@ -30,6 +30,7 @@ guidance in ``converters/README.md``. Anything that genuinely cannot be represen
 reported through :func:`ossie_microsoft._common.warn`.
 """
 
+import json
 import re
 
 import yaml
@@ -93,20 +94,41 @@ _RELATIONSHIP_CONSUMED = frozenset(
 )
 
 
-def convert_semantic_model_to_ossie(bim_file):
-    """Convert a parsed ``model.bim`` document into an Apache Ossie semantic model.
+def convert_semantic_model_to_ossie(semantic_model: dict | str) -> str:
+    """Convert a Power BI semantic model into an Apache Ossie semantic model.
 
     Args:
-        bim_file: The deserialized contents of a ``model.bim`` file (TMSL).
+        semantic_model: A ``model.bim`` document, either parsed (a TMSL mapping) or as
+            JSON text, or a single TMDL document as text. TMDL input requires the
+            optional ``tom`` extra.
 
     Returns:
         The Apache Ossie document serialized as YAML.
 
     Raises:
-        TypeError: if `bim_file` is not a parsed TMSL document.
+        TypeError: if `semantic_model` is neither a parsed TMSL document nor text.
         ValueError: if the document has no ``model`` object.
     """
-    return dump_yaml(build_ossie_document(bim_file))
+    return dump_yaml(build_ossie_document(_as_tmsl(semantic_model)))
+
+
+def _as_tmsl(semantic_model):
+    """Normalize a model.bim mapping, model.bim JSON text or TMDL text into TMSL."""
+    if isinstance(semantic_model, dict):
+        return semantic_model
+    if not isinstance(semantic_model, str):
+        raise TypeError(
+            "semantic_model must be a parsed model.bim document, model.bim JSON text, "
+            "or TMDL text"
+        )
+
+    stripped = semantic_model.lstrip("\ufeff").lstrip()
+    if stripped.startswith("{"):
+        return json.loads(stripped)
+
+    from .tom import deserialize_tmdl
+
+    return deserialize_tmdl(semantic_model)
 
 
 def build_ossie_document(bim_file):

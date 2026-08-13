@@ -21,6 +21,7 @@ import os
 from pathlib import Path
 
 import pytest
+import yaml
 
 pytest.importorskip("pythonnet", reason="optional TOM extra is not installed")
 pytest.importorskip("clr_loader", reason="optional TOM extra is not installed")
@@ -71,6 +72,31 @@ def test_tmdl_export_is_a_single_document(monkeypatch):
     assert tmdl.startswith("database ")
     assert "model Model" in tmdl
     assert "table store_sales" in tmdl
+
+
+def test_a_tmdl_document_imports_back_to_an_equivalent_ossie_model(monkeypatch):
+    monkeypatch.setenv("OSSIE_MICROSOFT_TOM_ASSEMBLIES", os.fspath(ASSEMBLIES))
+    original = json.loads(FIXTURE.read_text(encoding="utf-8-sig"))
+
+    from_tmsl = yaml.safe_load(convert_semantic_model_to_ossie(original))
+    tmdl = convert_ossie_to_semantic_model(
+        yaml.safe_dump(from_tmsl), output_format="TMDL"
+    )
+    from_tmdl = yaml.safe_load(convert_semantic_model_to_ossie(tmdl))
+
+    expected = from_tmsl["semantic_model"][0]
+    received = from_tmdl["semantic_model"][0]
+    assert received["name"] == expected["name"]
+    assert received["description"] == expected["description"]
+    assert [d["name"] for d in received["datasets"]] == [
+        d["name"] for d in expected["datasets"]
+    ]
+    assert [m["name"] for m in received["metrics"]] == [
+        m["name"] for m in expected["metrics"]
+    ]
+    assert [r["name"] for r in received["relationships"]] == [
+        r["name"] for r in expected["relationships"]
+    ]
 
 
 def test_tom_validation_catches_a_dangling_hierarchy_reference(tmp_path):

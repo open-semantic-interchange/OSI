@@ -144,10 +144,15 @@ bim = convert_ossie_to_semantic_model(
 # TMDL is returned as a single document, with every object nested inline.
 tmdl = convert_ossie_to_semantic_model(ossie_yaml, output_format="TMDL")
 print(tmdl)
+
+# The import direction also accepts model.bim JSON text or a TMDL document.
+ossie_yaml = convert_semantic_model_to_ossie(tmdl)
 ```
 
 `output_format` accepts `"TMSL"` (the default) or `"TMDL"`, case-insensitively.
-TMDL output requires the optional TOM setup described above.
+`convert_semantic_model_to_ossie` accepts a parsed `model.bim` mapping, `model.bim`
+JSON text, or a single TMDL document as text. TMDL input and output require the
+optional TOM setup described above.
 
 Each report is emitted twice, because the two channels answer different questions:
 

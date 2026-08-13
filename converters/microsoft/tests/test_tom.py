@@ -167,6 +167,40 @@ def test_serialize_tmdl_returns_a_single_document(tmp_path, monkeypatch):
         tom.serialize_tmdl([], assembly_dir=tmp_path)
 
 
+def test_split_tmdl_documents_separates_a_nested_model():
+    document = (
+        "database Sales\r\n"
+        "\tcompatibilityLevel: 1567\r\n"
+        "\r\n"
+        "\t/// a model\r\n"
+        "\tmodel Model\r\n"
+        "\t\tculture: en-US\r\n"
+    )
+    assert tom._split_tmdl_documents(document) == [
+        ("database.tmdl", "database Sales\n\tcompatibilityLevel: 1567\n"),
+        ("model.tmdl", "/// a model\nmodel Model\n\tculture: en-US\n"),
+    ]
+
+
+def test_split_tmdl_documents_separates_a_sibling_model():
+    document = (
+        "database Sales\n"
+        "\tcompatibilityLevel: 1567\n"
+        "\n"
+        "model Model\n"
+        "\tculture: en-US\n"
+    )
+    assert tom._split_tmdl_documents(document) == [
+        ("database.tmdl", "database Sales\n\tcompatibilityLevel: 1567\n"),
+        ("model.tmdl", "model Model\n\tculture: en-US\n"),
+    ]
+
+
+def test_split_tmdl_documents_passes_a_model_rooted_document_through():
+    document = "model Model\n\tculture: en-US\n"
+    assert tom._split_tmdl_documents(document) == [("model.tmdl", document)]
+
+
 def test_validate_bim_reads_a_bom(tmp_path, monkeypatch):
     model = tmp_path / "model.bim"
     model.write_text('{"name": "Sales"}', encoding="utf-8-sig")

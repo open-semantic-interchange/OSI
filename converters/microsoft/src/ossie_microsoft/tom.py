@@ -158,6 +158,64 @@ def serialize_tmdl(document, *, assembly_dir=None):
     return str(tom.TmdlSerializer.SerializeDatabase(database))
 
 
+def deserialize_tmdl(document, *, assembly_dir=None):
+    """Parse a single TMDL document into a TMSL mapping.
+
+    Accepts the database-rooted document :func:`serialize_tmdl` produces as well as a
+    model-rooted one.
+    """
+
+    if not isinstance(document, str):
+        raise TypeError("document must be TMDL text")
+
+    tom = _load_tom(_assembly_directory(assembly_dir))
+    serialization = import_module("Microsoft.AnalysisServices.Tabular.Serialization")
+    system = import_module("System")
+
+    context = serialization.MetadataSerializationContext.Create(
+        serialization.MetadataSerializationStyle.Tmdl
+    )
+    for logical_path, content in _split_tmdl_documents(document.lstrip("\ufeff")):
+        context.ReadFromDocument(
+            logical_path,
+            system.IO.StringReader(content),
+            system.Text.Encoding.UTF8,
+        )
+    return json.loads(tom.JsonSerializer.SerializeDatabase(context.ToDatabase(None)))
+
+
+def _split_tmdl_documents(document):
+    """Split one TMDL document into the documents TOM's parser accepts.
+
+    ``TmdlSerializer.SerializeDatabase`` nests ``model`` inside ``database``, but the
+    parser only reads the two as the separate documents of the folder representation.
+    A hand-written document may also place the two side by side; both forms are split
+    on the ``model`` header and the model block is de-indented to its own root.
+    """
+    lines = document.replace("\r\n", "\n").split("\n")
+    if not lines[0].startswith("database "):
+        return [("model.tmdl", document)]
+
+    model = next(
+        (index for index, line in enumerate(lines) if line.strip().startswith("model ")),
+        None,
+    )
+    if model is None:
+        return [("model.tmdl", document)]
+
+    start = model
+    while start and lines[start - 1].strip().startswith("///"):
+        start -= 1
+    indent = lines[model][: len(lines[model]) - len(lines[model].lstrip("\t "))]
+    body = [
+        line[len(indent) :] if line.startswith(indent) else line for line in lines[start:]
+    ]
+    return [
+        ("database.tmdl", "\n".join(lines[:start])),
+        ("model.tmdl", "\n".join(body)),
+    ]
+
+
 def validate_bim(path, *, assembly_dir=None):
     """Read a UTF-8 (optionally BOM-prefixed) ``.bim`` file and validate it."""
 
