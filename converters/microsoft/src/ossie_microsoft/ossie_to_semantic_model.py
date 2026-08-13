@@ -109,7 +109,7 @@ _DELIMITED_RE = re.compile(r'^\[([^\]]+)\]$|^"([^"]+)"$|^`([^`]+)`$')
 _QUERY_START_RE = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
 
 
-def convert_ossie_to_semantic_model(ossie_yaml_str, source: dict=None, output_format: Literal["TMSL", "TMDL"]="TMSL"):
+def convert_ossie_to_semantic_model(ossie_yaml_str, source: dict=None, output_format: Literal["TMSL", "TMDL"]="TMSL") -> dict | str:
     """Convert an Apache Ossie document into a Power BI semantic model.
 
     Args:
@@ -118,10 +118,10 @@ def convert_ossie_to_semantic_model(ossie_yaml_str, source: dict=None, output_fo
         source: Optional OneLake location for generated Direct Lake partitions, as
             ``{"workspaceId": ..., "itemId": ...}``.
         output_format: ``"TMSL"`` (the default) for a ``model.bim`` mapping, or
-            ``"TMDL"`` for a mapping of relative ``.tmdl`` paths to document text.
+            ``"TMDL"`` for a single TMDL document as text.
 
     Returns:
-        The TMSL model mapping or TMDL document mapping selected by ``output_format``.
+        The TMSL model mapping or the TMDL text selected by ``output_format``.
 
     Raises:
         TypeError: if the input is neither YAML text nor a parsed document.

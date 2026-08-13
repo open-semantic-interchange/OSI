@@ -20,7 +20,6 @@
 import json
 import os
 import sys
-import tempfile
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib import import_module
@@ -144,9 +143,10 @@ def validate_tmsl(document, *, assembly_dir=None):
 
 
 def serialize_tmdl(document, *, assembly_dir=None):
-    """Serialize a TMSL mapping or JSON string into canonical TMDL documents.
+    """Serialize a TMSL mapping or JSON string into a single canonical TMDL document.
 
-    Returns a mapping from each relative TMDL document path to its UTF-8 text.
+    Returns the TMDL text for the whole database, with every object nested inline
+    rather than split across the TMDL folder representation.
     """
 
     raw = json.dumps(document) if isinstance(document, dict) else document
@@ -155,13 +155,7 @@ def serialize_tmdl(document, *, assembly_dir=None):
 
     tom = _load_tom(_assembly_directory(assembly_dir))
     database = tom.JsonSerializer.DeserializeDatabase(raw)
-    with tempfile.TemporaryDirectory() as temporary_directory:
-        output = Path(temporary_directory)
-        tom.TmdlSerializer.SerializeDatabaseToFolder(database, os.fspath(output))
-        return {
-            path.relative_to(output).as_posix(): path.read_text(encoding="utf-8-sig")
-            for path in sorted(output.rglob("*.tmdl"))
-        }
+    return str(tom.TmdlSerializer.SerializeDatabase(database))
 
 
 def validate_bim(path, *, assembly_dir=None):

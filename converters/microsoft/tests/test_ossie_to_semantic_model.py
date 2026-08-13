@@ -115,7 +115,7 @@ def test_tmsl_is_the_default_and_can_be_selected_explicitly():
 
 def test_tmdl_serializes_the_completed_tmsl_model(monkeypatch):
     document = {"version": OSSIE_VERSION, "semantic_model": [_minimal()]}
-    expected = {"model.tmdl": "model Model\n"}
+    expected = "database Model\n\n\tmodel Model\n"
     received = []
 
     def fake_serialize_tmdl(tmsl):

@@ -21,7 +21,7 @@
 
 Converts between a Microsoft Power BI / Fabric semantic model and an Apache Ossie (OSI)
 semantic model. Power BI output is available as either a TMSL `model.bim` mapping or a
-TMDL document mapping. The conversion is offline and requires no Power BI or Fabric
+TMDL document. The conversion is offline and requires no Power BI or Fabric
 connection.
 
 ## Installation
@@ -141,10 +141,9 @@ bim = convert_ossie_to_semantic_model(
   source={"workspaceId": "<workspace-id>", "itemId": "<item-id>"},
 )
 
-# TMDL is a folder representation, returned as relative path -> document text.
-tmdl_documents = convert_ossie_to_semantic_model(ossie_yaml, output_format="TMDL")
-for relative_path, text in tmdl_documents.items():
-    print(relative_path, text)
+# TMDL is returned as a single document, with every object nested inline.
+tmdl = convert_ossie_to_semantic_model(ossie_yaml, output_format="TMDL")
+print(tmdl)
 ```
 
 `output_format` accepts `"TMSL"` (the default) or `"TMDL"`, case-insensitively.

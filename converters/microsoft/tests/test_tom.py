@@ -136,7 +136,7 @@ def test_validate_tmsl_handles_success_errors_and_bad_input(tmp_path, monkeypatc
         tom.validate_tmsl([], assembly_dir=tmp_path)
 
 
-def test_serialize_tmdl_returns_canonical_folder_documents(tmp_path, monkeypatch):
+def test_serialize_tmdl_returns_a_single_document(tmp_path, monkeypatch):
     database = object()
 
     class JsonSerializer:
@@ -147,14 +147,9 @@ def test_serialize_tmdl_returns_canonical_folder_documents(tmp_path, monkeypatch
 
     class TmdlSerializer:
         @staticmethod
-        def SerializeDatabaseToFolder(value, output):  # noqa: N802
+        def SerializeDatabase(value):  # noqa: N802
             assert value is database
-            root = type(tmp_path)(output)
-            (root / "tables").mkdir()
-            (root / "model.tmdl").write_text("model Model\n", encoding="utf-8-sig")
-            (root / "tables" / "Sales.tmdl").write_text(
-                "table Sales\n", encoding="utf-8-sig"
-            )
+            return "database Sales\n\n\tmodel Model\n"
 
     monkeypatch.setattr(
         tom,
@@ -165,10 +160,9 @@ def test_serialize_tmdl_returns_canonical_folder_documents(tmp_path, monkeypatch
         ),
     )
 
-    assert tom.serialize_tmdl({"name": "Sales"}, assembly_dir=tmp_path) == {
-        "model.tmdl": "model Model\n",
-        "tables/Sales.tmdl": "table Sales\n",
-    }
+    assert tom.serialize_tmdl({"name": "Sales"}, assembly_dir=tmp_path) == (
+        "database Sales\n\n\tmodel Model\n"
+    )
     with pytest.raises(TypeError, match="mapping or JSON string"):
         tom.serialize_tmdl([], assembly_dir=tmp_path)
 
