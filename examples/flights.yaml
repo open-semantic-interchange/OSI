@@ -537,10 +537,8 @@ ontology:
     - '{Route} connects to departure- {Airport}'    # The hyphen after "departure" has significance when verbalizing constraints
     multiplicity: ManyToOne                         # Each Route connects to at most one departure Airport
     requires: [ 'NOT Route.destination(Airport)' ]
-ontology_mappings:
-- name: flights_mapping
-  semantic_model:
-    name: Flights semantic model
+semantic_model:
+  - name: Flights semantic model
     datasets:
     - name: RUNWAY
       source: DATABASE.SCHEMA.RUNWAYS
@@ -821,6 +819,9 @@ ontology_mappings:
           dialects:
           - dialect: ANSI_SQL
             expression: name
+
+ontology_mappings:
+- name: flights_mapping
   concept_mappings:
   - concept: Runway
     object_mappings:
