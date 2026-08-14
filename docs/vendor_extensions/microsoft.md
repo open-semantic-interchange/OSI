@@ -136,6 +136,31 @@ Model-level constructs that have no Ossie object at all (roles, perspectives, cu
 shared expressions) live in the model-level payload, keyed by their TMSL collection
 name.
 
+### Which name space a value refers to
+
+Many payload values are *references* to other objects: `sortByColumn`, a hierarchy
+level's `column`, a role's `tablePermissions[].name`, a perspective's member lists.
+
+**Every such reference is a TMSL name, not an Ossie name.** The payload is TMSL
+fragments held verbatim, so its internal references must stay in TMSL's name space or
+the fragment stops being replayable. The two name spaces routinely differ: a converter
+may emit an Ossie field `month_name` for the TMSL column `MonthName`, and it is the
+latter that a `sortByColumn` names.
+
+Two rules follow, and the second is easy to get wrong:
+
+1. **Do not translate references into Ossie names.** A reference rewritten into the
+   Ossie name space no longer resolves against the model it will be replayed into.
+2. **Do not reference a Tabular object that has no Ossie object.** If a payload names a
+   column, that column must also be present as an ordinary field — otherwise the
+   reference dangles for every consumer that reads only core fields, and the construct
+   it supports (a sort order, a hierarchy level) silently loses its target. Preserving
+   a sort key *only* inside a payload is not preservation.
+
+This is why a column that exists purely to support another construct — a month-number
+sort key, a hierarchy's year column — is emitted as a normal field, usually with
+`isHidden: true` in its own payload, rather than left out as an implementation detail.
+
 ## Model level
 
 | Key | Construct | Why core cannot hold it |
@@ -211,7 +236,7 @@ The measure's DAX expression itself does **not** go here — see
 
 | Key | Construct |
 |---|---|
-| `isActive` | Whether the relationship participates in filter propagation by default. Ossie relationships have no inactive state; an inactive relationship recorded as an ordinary Ossie relationship would misrepresent the join graph. |
+| `isActive` | Whether the relationship participates in filter propagation by default. Ossie relationships have no inactive state, so this flag is written on **every** relationship, active ones included — a reader that finds no flag cannot otherwise distinguish "active" from "converted by a tool that dropped it". An inactive relationship must not be emitted as an ordinary Ossie relationship, because that asserts a join the engine does not apply by default; report it instead. |
 | `crossFilteringBehavior` | `oneDirection`, `bothDirections`, or `automatic`. |
 | `securityFilteringBehavior` | How row-level security filters propagate across the relationship. |
 | `fromCardinality`, `toCardinality` | `one`, `many`, or `none`. Records many-to-many, which Ossie cannot express, and records the original orientation when a converter flipped the endpoints to put the many side on `from`. |
