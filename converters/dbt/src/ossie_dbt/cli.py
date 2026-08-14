@@ -68,19 +68,18 @@ def _cmd_msi_to_osi(args: argparse.Namespace) -> None:
 
 
 def safe_model_dump(obj, **kwargs):
-    """兼容 Pydantic v1 和 v2 的序列化"""
+    """compatible pydantic v1 和 v2"""
     if hasattr(obj, 'model_dump_json'):
         return obj.model_dump_json(**kwargs)
     elif hasattr(obj, 'json'):
         return obj.json(**kwargs)
     elif hasattr(obj, 'dict'):
-        # Pydantic v1 的 dict 方法
+        # Pydantic v1
         return json.dumps(obj.dict(**kwargs), indent=kwargs.get('indent', 2))
     elif hasattr(obj, 'model_dump'):
-        # Pydantic v2 的 dict 方法
+        # Pydantic v2
         return json.dumps(obj.model_dump(**kwargs), indent=kwargs.get('indent', 2))
     else:
-        # 尝试直接转字典
         return json.dumps(obj.__dict__, indent=kwargs.get('indent', 2))
     
 def _cmd_osi_to_msi(args: argparse.Namespace) -> None:
