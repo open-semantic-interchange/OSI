@@ -28,8 +28,8 @@
     },
     "Vendor": {
       "type": "string",
-      "examples": ["COMMON", "SNOWFLAKE", "SALESFORCE", "DBT", "DATABRICKS", "GOODDATA", "WISDOM"],
-      "description": "Vendor name for custom extensions. Any string value is accepted."
+      "examples": ["COMMON", "SNOWFLAKE", "SALESFORCE", "DBT", "DATABRICKS", "GOODDATA", "HONEYDEW", "WISDOM", "OMNI", "NVIDIA_GSF", "MICROSOFT"],
+      "description": "Vendor name for custom extensions. Any string value is accepted. These examples are the well-known tokens documented in core-spec/spec.md; they are not an exhaustive or closed set."
     },
     "AIContext": {
       "description": "Additional context for AI tools",

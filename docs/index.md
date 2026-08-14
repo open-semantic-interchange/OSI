@@ -343,6 +343,7 @@ A practical guide for organizations looking to adopt Ossie.
 - **TPC-DS Example Model**: [examples/tpcds_semantic_model.yaml](../examples/tpcds_semantic_model.yaml)
 - **Validation Script**: [validation/validate.py](../validation/validate.py)
 - **Converters Guide**: [converters/README.md](../converters/README.md)
+- **Vendor Extensions**: [docs/vendor_extensions/](vendor_extensions/) — per-vendor `custom_extensions` conventions
 
 ---
 

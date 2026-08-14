@@ -65,7 +65,10 @@ Read a vendor-specific semantic model and produce a valid Ossie model, including
 
 ## Supported Vendors
 
-The Ossie specification currently defines extensions for the following vendors:
+The canonical list of well-known vendor tokens lives in
+[`core-spec/spec.md`](../core-spec/spec.md#vendor-names); the table below adds the
+converter-facing description of the source format. Add a vendor to both places, or to
+neither — they have drifted apart before.
 
 | Vendor | Description |
 |--------|-------------|
@@ -73,11 +76,20 @@ The Ossie specification currently defines extensions for the following vendors:
 | `SALESFORCE` | Salesforce / Tableau semantic layer |
 | `DBT` | dbt semantic models |
 | `DATABRICKS` | Databricks semantic layer |
+| `GOODDATA` | GoodData workspace / logical data model |
+| `HONEYDEW` | Honeydew semantic layer |
 | `OMNI` | Omni semantic model |
 | `WISDOM` | WisdomAI domain |
 | `NVIDIA_GSF` | NVIDIA Generative Semantic Fabric standalone YAML |
+| `MICROSOFT` | Microsoft Tabular model — Power BI, Fabric semantic models, Azure Analysis Services and SQL Server Analysis Services (TMSL `model.bim` / TMDL) |
 
-Each vendor may define custom extensions (via the `custom_extensions` field in the Ossie spec) to carry vendor-specific metadata that does not have an equivalent in the core specification.
+A token names the **organization**, not one of its products, so one token covers every
+product that shares the same underlying model. `SALESFORCE` already works this way for
+the Tableau semantic layer, and `MICROSOFT` works this way for the Tabular model that
+Power BI, Fabric, Azure Analysis Services and SQL Server Analysis Services all share.
+
+Each vendor may define custom extensions (via the `custom_extensions` field in the Ossie spec) to carry vendor-specific metadata that does not have an equivalent in the core specification. Vendors that need more than a table row document their payload under
+[`docs/vendor_extensions/`](../docs/vendor_extensions/).
 
 ## Mapping Core Constructs
 

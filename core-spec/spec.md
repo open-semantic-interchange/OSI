@@ -434,7 +434,12 @@ custom_extensions:
 The `vendor_name` field is a free-form string, allowing any vendor or organization to
 define custom extensions without requiring changes to the core specification.
 
-The following are well-known examples:
+This table is the canonical list of well-known tokens. It is a registry of conventions,
+not a closed set: a `vendor_name` outside this table is valid and MUST be preserved by
+conforming tools. A token names the **organization** that defines the extension, not one
+of its products, so that a single token covers every product built on the same underlying
+model (see `SALESFORCE`, which covers the Tableau semantic layer, and `MICROSOFT`, which
+covers the Tabular model shared by Power BI, Fabric and Analysis Services).
 
 | Vendor | Description |
 |--------|-------------|
@@ -446,6 +451,9 @@ The following are well-known examples:
 | `GOODDATA` | GoodData-specific attributes |
 | `HONEYDEW` | Honeydew-specific attributes |
 | `WISDOM` | WisdomAI-specific attributes |
+| `OMNI` | Omni-specific attributes |
+| `NVIDIA_GSF` | NVIDIA Generative Semantic Fabric-specific attributes |
+| `MICROSOFT` | Microsoft Tabular model attributes — Power BI, Fabric semantic models, Azure Analysis Services and SQL Server Analysis Services (TMSL / TMDL / TOM). See [Microsoft vendor extension](../docs/vendor_extensions/microsoft.md). |
 
 ### Examples
 
@@ -488,12 +496,34 @@ The following are well-known examples:
 **Databricks Extension:**
 
 ```yaml
-- vendor_name: Databricks
+- vendor_name: DATABRICKS
   data: '{
     "default_catalog": "finance",
     "default_schema": "gold"
   }'
 ```
+
+**Microsoft Extension:**
+
+Carries the Tabular model properties that Ossie core cannot express. A measure's DAX
+itself belongs in the metric's `expression` under the `DAX` dialect, not here — the
+extension carries only what has no core equivalent.
+
+```yaml
+- vendor_name: MICROSOFT
+  data: '{
+    "_v": 1,
+    "format": "TMSL",
+    "formatString": "#,0.00",
+    "displayFolder": "Sales\\KPIs",
+    "isHidden": false,
+    "lineageTag": "9b1f6f3a-4c2e-4d2a-9c5a-1f8b2d0e7a41"
+  }'
+```
+
+See [Microsoft vendor extension](../docs/vendor_extensions/microsoft.md) for the full
+key set, including hierarchies, calculation groups, RLS/OLS roles, partitions and
+storage mode, and perspectives.
 
 ---
 
