@@ -67,6 +67,22 @@ def _cmd_msi_to_osi(args: argparse.Namespace) -> None:
     print(f"Written to {output_path}", file=sys.stderr)
 
 
+def safe_model_dump(obj, **kwargs):
+    """兼容 Pydantic v1 和 v2 的序列化"""
+    if hasattr(obj, 'model_dump_json'):
+        return obj.model_dump_json(**kwargs)
+    elif hasattr(obj, 'json'):
+        return obj.json(**kwargs)
+    elif hasattr(obj, 'dict'):
+        # Pydantic v1 的 dict 方法
+        return json.dumps(obj.dict(**kwargs), indent=kwargs.get('indent', 2))
+    elif hasattr(obj, 'model_dump'):
+        # Pydantic v2 的 dict 方法
+        return json.dumps(obj.model_dump(**kwargs), indent=kwargs.get('indent', 2))
+    else:
+        # 尝试直接转字典
+        return json.dumps(obj.__dict__, indent=kwargs.get('indent', 2))
+    
 def _cmd_osi_to_msi(args: argparse.Namespace) -> None:
     input_path = Path(args.input)
     output_path = Path(args.output)
@@ -75,7 +91,13 @@ def _cmd_osi_to_msi(args: argparse.Namespace) -> None:
     document = OSIDocument.model_validate(raw)
     result = OSIToMSIConverter().convert(document)
 
-    output_path.write_text(result.output.model_dump_json(by_alias=True, exclude_none=True, indent=2))
+    json_output = safe_model_dump(
+        result.output, 
+        by_alias=True, 
+        exclude_none=True, 
+        indent=2
+)
+    output_path.write_text(json_output)
     print(f"Written to {output_path}", file=sys.stderr)
 
 
