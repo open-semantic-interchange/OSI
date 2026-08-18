@@ -5,15 +5,14 @@ description: >
   demonstrating how custom_properties preserves OWL/RDF data (IRIs, labels, and
   axioms) that the core OSI spec does not model, so the source can be round-tripped.
 ontology:
-  - concept:
-      name: Person
-      type: EntityType
-      custom_properties:
-        iri: "http://xmlns.com/foaf/0.1/Person"
-        rdfs:label@en: "Person"
-        rdfs:label@fr: "Personne"
-        rdfs:comment@en: "A person."
-        owl:equivalentClass: "https://schema.org/Person"
+  - concept: Person
+    type: EntityType
+    custom_properties:
+      iri: "http://xmlns.com/foaf/0.1/Person"
+      rdfs:label@en: "Person"
+      rdfs:label@fr: "Personne"
+      rdfs:comment@en: "A person."
+      owl:equivalentClass: "https://schema.org/Person"
     relationships:
       - name: name
         roles:
