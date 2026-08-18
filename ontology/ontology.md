@@ -1,4 +1,23 @@
-# OSI - Ontology Specification
+<!--
+  Licensed to the Apache Software Foundation (ASF) under one
+  or more contributor license agreements.  See the NOTICE file
+  distributed with this work for additional information
+  regarding copyright ownership.  The ASF licenses this file
+  to you under the Apache License, Version 2.0 (the
+  "License"); you may not use this file except in compliance
+  with the License.  You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing,
+  software distributed under the License is distributed on an
+  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  KIND, either express or implied.  See the License for the
+  specific language governing permissions and limitations
+  under the License.
+-->
+
+# Apache Ossie - Ontology Specification
 
 **Version:** 0.2.0.dev0
 
@@ -29,7 +48,7 @@ e-mail address. In some modeling languages these are called either entities or o
 
 A value type is a concept that represents instances of some data type (i.e SQL types like Integer
 or String) with additional semantics. For instance, a social-security number is a string or positive
-integer that comprises exactly nine digits. In some modeling langauges these are called data types
+integer that comprises exactly nine digits. In some modeling languages these are called data types
 or domains.
 
 ### Built-in concepts
@@ -71,31 +90,28 @@ hierarchically, grouping each relationship under the concept that plays its firs
 | `ontology` | list | Yes | Concepts and relationships they group that form this ontology |
 | `custom_properties` | object | No | Open set of custom properties not covered by this spec (see [Custom properties](#custom-properties)) |
 
-Each component of an ontology defines a concept and a list of relationships where that
-concept plays the first role:
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `concept` | Concept | Yes | A concept in this ontology |
-| `relationships` | list | No | Relationships where this concept plays the first role |
+Each component of an ontology declares a concept and lists the relationships where that
+concept plays the first role. The concept's name is the value of the `concept` field, and
+the concept's remaining fields are declared alongside it.
 
 ### Concepts
 
 Concepts represent the types of things that have meaning in a business setting, e.g., person, company,
 or salary. Every ontology implicitly includes all of the [built-in concepts](#built-in-concepts) and
-may refer to them by name without declaring them. 
+may refer to them by name without declaring them.
 
 Concepts have the following schema:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | Yes | Unique name of this concept |
+| `concept` | string | Yes | Unique name of this concept |
 | `type` | ConceptType | Yes | Entity type or value type |
 | `description` | string | No | Human-readable description |
 | `extends` | list | No | Names of this concept's supertypes |
 | `derived_by` | list | No | Expressions that derive this concept's population |
 | `identify_by` | list | No | Names of relationships that uniquely reference objects of this concept |
 | `requires` | list | No | Expressions that constrain this concept's population |
+| `relationships` | list | No | Relationships where this concept plays the first role |
 | `custom_properties` | object | No | Open set of custom properties not covered by this spec (see [Custom properties](#custom-properties)) |
 
 Each concept is either an entity type or a value type.
@@ -115,14 +131,12 @@ This ontology snippet:
 ```yaml
 name: EnterpriseOntology
 ontology:
-  - concept:
-      name: SocialSecurityNr
-      type: ValueType
-      extends: [Integer]
-  - concept:
-      name: Employee
-      type: EntityType
-      extends: [Person]
+  - concept: SocialSecurityNr
+    type: ValueType
+    extends: [Integer]
+  - concept: Employee
+    type: EntityType
+    extends: [Person]
 ```
 declares two concepts that extend other concepts.
 
@@ -145,15 +159,14 @@ Each relationship that is declared under a concept conforms to the following sch
 | `verbalizes` | list | Yes | Patterns describing how to verbalize links |
 | `custom_properties` | object | No | Open set of custom properties not covered by this spec (see [Custom properties](#custom-properties)) |
 
-Each relationship is uniquely identified by a prepending its declared name with that of the containing
+Each relationship is uniquely identified by prepending its declared name with that of the containing
 concept. For instance, in:
 
 ```yaml
 ontology:
-  - concept:
-      name: Person
-      type: EntityType
-      identify_by: [ nr ]
+  - concept: Person
+    type: EntityType
+    identify_by: [ nr ]
     relationships:
       - name: nr
         roles:
@@ -171,7 +184,7 @@ ontology:
 the relationship is identified by the string `Person.earns`. This convention naturally supports
 expressions that navigate over the links of relationships using the “dot-join” operator in a
 manner that is familiar to object-oriented programming languages. This relationship links
-`Person` and `Salary` objects and verbalizes each link as “Person earns Salary.” 
+`Person` and `Salary` objects and verbalizes each link as “Person earns Salary.”
 
 #### Roles
 
@@ -194,9 +207,8 @@ For instance, in:
 
 ```yaml
 ontology:
-  - concept:
-      name: Person
-      type: EntityType
+  - concept: Person
+    type: EntityType
     relationships:
       - name: files_married_joint
         verbalizes: [ "{Person} files married filing joint" ]
@@ -205,7 +217,7 @@ ontology:
           - concept: Vehicle
           - concept: Date
         multiplicity: ManyToOne
-        verbalizes: [ "{Person} puchased {Vehicle} on {Date}" ]
+        verbalizes: [ "{Person} purchased {Vehicle} on {Date}" ]
 ```
 
 the unary relationship `Person.files_married_joint` has an empty roles list, while the
@@ -213,15 +225,14 @@ ternary relationship `Person.purchased_on` declares two additional roles played 
 `Vehicle` and `Date` respectively,
 
 The role player often suffices to distinguish the role within its relationship, but when
-the same concept plays more than one role, the user must declare a distinguising name for
+the same concept plays more than one role, the user must declare a distinguishing name for
 any additional role whose player's name does not distinguish it from other roles in
 the same relationship. For instance, in:
 
 ```yaml
 ontology:
-  - concept:
-      name: Store
-      type: EntityType
+  - concept: Store
+    type: EntityType
     relationships:
       - name: ships_to_in_days
         roles:
@@ -238,13 +249,13 @@ this relationship.
 Expressions that are used to define derived_by rules and requires constraints will refer to
 roles by name -- the name defaulting to the concept that plays the role unless an explicit
 role name is provided. In any expression that involving links of the `Store.ships_to_in_days`
-relationship can then use the variables `Store` and `destination` to refer to objecs that
+relationship can then use the variables `Store` and `destination` to refer to objects that
 play these two `Store`-playing roles without ambiguity.
 
 #### Multiplicities
 
 If a relationship comprises more than one role, objects that play the last role could be functionally
-dermined by a tuple of objects that play the other roles. This knowledge is declared using a `ManyToOne`
+determined by a tuple of objects that play the other roles. This knowledge is declared using a `ManyToOne`
 multiplicity constraint. In the examples above, the constraint declares that each person earns at most
 one salary and that for each pair of stores, the former ships to the latter in at most one number of
 days. For relationships of ternary and higher arity, the multiplicity applies to the n-th role, meaning
@@ -266,19 +277,18 @@ the pair of relationships `License.acct` and `License.seat_nr` can be used to re
 its associated account and seat number. These relationships are always binary, and their first role
 is always played by the referent concept, i.e., the concept that the relationship is used to reference.
 The `identify_by` array allows modelers to list the names of relationships that form the preferred
-idnetifier of a concept.
+identifier of a concept.
 
 ### Derivation expressions
 
-Concepts and relationships may be derived using expressions. Think of a derived concept or 
+Concepts and relationships may be derived using expressions. Think of a derived concept or
 relationship as a view whose objects or links are derived from those of other concepts or
 relationships. For instance:
 
 ```yaml
 ontology:
-  - concept:
-      name: Person
-      type: EntityType
+  - concept: Person
+    type: EntityType
     relationships:
       - name: parent_of
         roles:
@@ -291,7 +301,7 @@ ontology:
             name: "descendant"
         derived_by:
           - "Person.parent_of(descendant)"
-            "Person.ancestor_of.parent_of(descendant)"  
+          - "Person.ancestor_of.parent_of(descendant)"
       - name: taxed_at
         roles:
           - concept: TaxRate
@@ -325,15 +335,14 @@ using one or more expressions. For instance:
 
 ```yaml
 ontology:
-  - concept:
-      name: Employee
-      type: EntityType
-      extends: [Person]
-      derived_by: [ "EXISTS ( Person.earns )" ]
+  - concept: Employee
+    type: EntityType
+    extends: [Person]
+    derived_by: [ "EXISTS ( Person.earns )" ]
 ```
 
 declares that the population of Employee is derived from the population of Person by
-classifying each Person who earns some salary as a Employee.
+classifying each Person who earns some salary as an Employee.
 
 ### Requires
 
@@ -343,11 +352,10 @@ expression must reference the concept, as in:
 
 ```yaml
 ontology:
-  - concept:
-      name: SocialSecurityNr
-      type: ValueType
-      extends: [Integer]
-      requires: [ "0 < SocialSecurityNr", "SocialSecurityNr <= 999999999" ]
+  - concept: SocialSecurityNr
+    type: ValueType
+    extends: [Integer]
+    requires: [ "0 < SocialSecurityNr", "SocialSecurityNr <= 999999999" ]
 ```
 
 When applied to a relationship, each expression must reference one or more roles of the
@@ -355,9 +363,8 @@ relationship. For instance, in:
 
 ```yaml
 ontology:
-  - concept:
-      name: Item
-      type: EntityType
+  - concept: Item
+    type: EntityType
     relationships:
       - name: offers_in
         roles:
@@ -390,14 +397,13 @@ map an `owl:Class` to a concept while retaining its IRI and annotations:
 
 ```yaml
 ontology:
-  - concept:
-      name: Person
-      type: EntityType
-      custom_properties:
-        iri: "http://xmlns.com/foaf/0.1/Person"
-        rdfs:label@en: "Person"
-        rdfs:label@fr: "Personne"
-        owl:equivalentClass: "https://schema.org/Person"
+  - concept: Person
+    type: EntityType
+    custom_properties:
+      iri: "http://xmlns.com/foaf/0.1/Person"
+      rdfs:label@en: "Person"
+      rdfs:label@fr: "Personne"
+      owl:equivalentClass: "https://schema.org/Person"
     relationships:
       - name: knows
         roles:
@@ -446,7 +452,7 @@ mappings that group by some concept.
 
 Each concept mapping declares how to populate a concept with objects and how to populate the relationships
 that group under that concept with links. These declarations are formed from patterns of expressions that
-reference fields in a logical model that is declared using the OSI core semantic model spec.
+reference fields in a logical model that is declared using the Ossie core semantic model spec.
 
 Concept mappings have the following schema:
 
@@ -467,22 +473,20 @@ An object mapping has the following schema:
 |---------------|---------|-----|-------|
 | `concept`     | string  | No | Names the concept being mapped to using this object map |
 | `expression`  | string  | if no `referent_mappings` | SQL expression that computes a value from fields |
-| `referent_mappings` | list  | if no `expression` | Referent mappings that find entity objects using identifying realtionships |
+| `referent_mappings` | list  | if no `expression` | Referent mappings that find entity objects using identifying relationships |
 
 When the concept is a value type or an entity type with a simple identifier, then an object mapping is just
 a SQL expression. For instance, given this ontology snippet:
 
 ```yaml
 ontology:
-  - concept:
-    name: SocialSecurityNr
+  - concept: SocialSecurityNr
     type: ValueType
     extends: [ Integer ]
     requires: [ "0 < SocialSecurityNr", "SocialSecurityNr <= 999999999" ]
-  - concept:
-      name: Person
-      type: EntityType
-      identify_by: [ nr ]
+  - concept: Person
+    type: EntityType
+    identify_by: [ nr ]
     relationships:
       - name: nr
         roles:
@@ -503,7 +507,7 @@ then mapping those values to `Person` objects using the declared identifier. The
 concept_mappings:
   - concept: Person
     object_mappings:
-      - expression: PERSONS.SSN                  
+      - expression: PERSONS.SSN
   ...
 ```
 maps values from the `SSN` field of dataset `PERSONS` into `Person` objects.
@@ -518,24 +522,25 @@ Referent mappings have the following schema:
 |----------------|--------|-----|-------|
 | `relationship` | string | Yes | Name of an identifying relationship |
 | `expression`  | string  | if no `referent_mappings` | SQL expression that computes a value from fields |
-| `referent_mappings` | list  | if no `expression` | Referent mappings that find entity objects using identifying realtionships |
+| `referent_mappings` | list  | if no `expression` | Referent mappings that find entity objects using identifying relationships |
 
 For instance, consider this ontology snippet:
 
 ```yaml
 ontology:
-  - concept:
-      name: OrderLineItem
-      type: EntityType
-      identify_by: [ "nr", "order" ]
-      requires: [ "OrderLineItem.nr", "OrderLineItem.order" ]
+  - concept: OrderLineItem
+    type: EntityType
+    identify_by: [ "nr", "order" ]
+    requires: [ "OrderLineItem.nr", "OrderLineItem.order" ]
     relationships:
       - name: nr
         roles: [ concept: LineNr ]
         multiplicity: ManyToOne
+        verbalizes: [ "{OrderLineItem} has line number {LineNr}" ]
       - name: order
         roles: [ concept: CustOrder ]
         multiplicity: ManyToOne
+        verbalizes: [ "{OrderLineItem} belongs to {CustOrder}" ]
 ```
 
 and notice that `OrderLineItem` has a compound identifier. This concept mapping:
@@ -585,15 +590,14 @@ For instance, this ontology snippet:
 
 ```yaml
 ontology:
-  - concept:
-      name: Item
-      type: EntityType
-      identify_by: [ nr ]
+  - concept: Item
+    type: EntityType
+    identify_by: [ nr ]
     relationships:
       - name: nr
         roles: [ concept: SkuNr ]
         multiplicity: OneToOne
-        verbalizes: "{Item} is identified by {SkuNr}"
+        verbalizes: [ "{Item} is identified by {SkuNr}" ]
       - name: active     # A unary relationship
         verbalizes: [ "{Item} is actively sold" ]
       - name: active_in
