@@ -16,6 +16,7 @@
 # under the License.
 
 import io
+import warnings
 import zipfile
 from pathlib import Path
 from typing import Iterable
@@ -106,7 +107,23 @@ def get_top_level_json_file_from_dir(base_dir: Path) -> Path:
 
 
 def validate_dir(base_dir: Path) -> None:
-    """Ensure the extracted folder contains a required 'data_sets/' directory."""
+    """Warn when the extracted folder carries no 'data_sets/' directory.
+
+    Not an error. Object types, properties, keys and links all come from the
+    ontology JSON, so the ontology that results is structurally complete and
+    valid on its own — SDK-extracted exports routinely ship this way.
+
+    What is lost is the weaving: datasets are what tie each concept back to the
+    table behind it, so without them the model has no mappings to any source.
+    It will build and type-check, and every query against it will return no
+    rows. Supply the datasets (or add the mappings by hand) before pointing it
+    at data.
+    """
     root = _resolve_dir_root(base_dir)
     if not (root / "data_sets").is_dir():
-        raise ValueError("Directory does not contain required 'data_sets' folder")
+        warnings.warn(
+            "Directory contains no 'data_sets' folder. The ontology will be built "
+            "from the ontology JSON alone: valid, but with no mappings connecting "
+            "its concepts to source tables, so queries against it return nothing.",
+            stacklevel=2,
+        )

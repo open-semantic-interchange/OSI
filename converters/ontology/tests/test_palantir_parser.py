@@ -22,6 +22,10 @@ extracted folder, a folder that wraps a single ZIP, and any of those packaged
 under a single root directory. These tests exercise each supported layout plus
 the validation failure paths (missing/empty ``data_sets`` folder, ambiguous or
 missing ontology JSON, unsupported inputs).
+
+Layout is not the only thing that varies between export formats: the last
+section covers the several keys under which a datasource carries its own
+identifier, and how a subclass teaches the parser one more.
 """
 
 from __future__ import annotations
@@ -33,7 +37,7 @@ from pathlib import Path
 import pytest
 
 from ossie_ontology.external.palantir.model import Ontology
-from ossie_ontology.external.palantir.parser import PalantirParser
+from ossie_ontology.external.palantir.parser import PalantirOntologyParser, PalantirParser
 
 # A minimal-but-complete Palantir export: one object type backed by one dataset.
 _ONTOLOGY_JSON = {
@@ -137,30 +141,37 @@ def test_parse_non_zip_file_raises(tmp_path: Path):
 
 # ----- invalid data_sets -----------------------------------------------
 
-def test_zip_missing_data_sets_folder_raises(tmp_path: Path):
+# Datasets are optional: without them the ontology still parses in full, but
+# nothing maps its concepts to source tables, so it answers queries with
+# nothing. Each case warns and carries on rather than failing.
+
+def test_zip_missing_data_sets_folder_warns(tmp_path: Path):
     zip_path = tmp_path / "export.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:
         zf.writestr("ontology.json", json.dumps(_ONTOLOGY_JSON))
-    with pytest.raises(ValueError, match="does not contain required 'data_sets' folder"):
-        PalantirParser().parse(zip_path)
+    with pytest.warns(UserWarning, match="no 'data_sets' folder"):
+        ontology = PalantirParser().parse(zip_path)
+    assert ontology.object_types()
 
 
-def test_directory_missing_data_sets_folder_raises(tmp_path: Path):
+def test_directory_missing_data_sets_folder_warns(tmp_path: Path):
     export = tmp_path / "export"
     export.mkdir()
     (export / "ontology.json").write_text(json.dumps(_ONTOLOGY_JSON))
-    with pytest.raises(ValueError, match="does not contain required 'data_sets' folder"):
-        PalantirParser().parse(export)
+    with pytest.warns(UserWarning, match="no 'data_sets' folder"):
+        ontology = PalantirParser().parse(export)
+    assert ontology.object_types()
 
 
-def test_data_sets_folder_without_json_raises(tmp_path: Path):
+def test_data_sets_folder_without_json_warns(tmp_path: Path):
     zip_path = tmp_path / "export.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:
         zf.writestr("ontology.json", json.dumps(_ONTOLOGY_JSON))
         # A data_sets/ entry exists but contains no JSON files.
         zf.writestr("data_sets/README.txt", "no json here")
-    with pytest.raises(ValueError, match="'data_sets' folder contains no JSON files"):
-        PalantirParser().parse(zip_path)
+    with pytest.warns(UserWarning, match="contains no JSON files"):
+        ontology = PalantirParser().parse(zip_path)
+    assert ontology.object_types()
 
 
 # ----- ontology JSON resolution -----------------------------------------
@@ -180,3 +191,95 @@ def test_multiple_top_level_json_in_directory_raises(tmp_path: Path):
     (export / "other.json").write_text(json.dumps(_ONTOLOGY_JSON))
     with pytest.raises(ValueError, match="exactly one top-level JSON file"):
         PalantirParser().parse(export)
+
+
+# ----- datasource identifiers -------------------------------------------
+
+# A datasource names itself under a key that depends on how old the export is:
+# `datasourceRid` in the ones that introduced it, plain `rid` in the versioned
+# (v1/v2/v3) ones. The parser reads through DATASOURCE_RID_KEYS so both work and
+# a further spelling costs one entry rather than a rewrite of the incoming JSON.
+# `backingResourceRid` is what ties the datasource to a dataset, and is matched
+# against the dataset JSON's `mainDatasetId` — hence "ri.ot.1" below.
+
+def _write_export_with_datasource(base: Path, datasource: dict) -> Path:
+    """An extracted-folder export whose object type declares one *datasource*."""
+    ontology = json.loads(json.dumps(_ONTOLOGY_JSON))
+    ontology["objectTypes"][0]["datasources"] = [datasource]
+
+    (base / "data_sets").mkdir(parents=True)
+    (base / "ontology.json").write_text(json.dumps(ontology))
+    (base / "data_sets" / "ds.json").write_text(json.dumps(_DATASET_JSON))
+    return base
+
+
+def _sole_data_source(model: Ontology):
+    (data_source,) = model.object_types()["ri.ot.1"].data_sources()
+    return data_source
+
+
+def test_datasource_rid_under_legacy_key(tmp_path: Path):
+    export = _write_export_with_datasource(
+        tmp_path / "export",
+        {"datasourceRid": "ri.datasource.1", "backingResourceRid": "ri.ot.1"},
+    )
+    model = PalantirParser().parse(export)
+
+    assert _sole_data_source(model).backing_datasource_id() == "ri.datasource.1"
+    _assert_widget_model(model)
+
+
+def test_datasource_rid_under_rid_key(tmp_path: Path):
+    export = _write_export_with_datasource(
+        tmp_path / "export",
+        {"rid": "ri.datasource.1", "backingResourceRid": "ri.ot.1"},
+    )
+    model = PalantirParser().parse(export)
+
+    assert _sole_data_source(model).backing_datasource_id() == "ri.datasource.1"
+    _assert_widget_model(model)
+
+
+def test_datasource_rid_prefers_the_earlier_key(tmp_path: Path):
+    """An export carrying both spellings resolves in DATASOURCE_RID_KEYS order."""
+    export = _write_export_with_datasource(
+        tmp_path / "export",
+        {
+            "datasourceRid": "ri.datasource.preferred",
+            "rid": "ri.datasource.other",
+            "backingResourceRid": "ri.ot.1",
+        },
+    )
+    model = PalantirParser().parse(export)
+
+    assert _sole_data_source(model).backing_datasource_id() == "ri.datasource.preferred"
+
+
+def test_datasource_without_any_known_rid_key_raises(tmp_path: Path):
+    export = _write_export_with_datasource(
+        tmp_path / "export", {"backingResourceRid": "ri.ot.1"}
+    )
+    with pytest.raises(ValueError, match="must be non-empty"):
+        PalantirParser().parse(export)
+
+
+def test_subclass_can_add_a_datasource_rid_spelling(tmp_path: Path):
+    """The one-line extension the key list exists for."""
+
+    class _ExtendedOntologyParser(PalantirOntologyParser):
+        DATASOURCE_RID_KEYS = PalantirOntologyParser.DATASOURCE_RID_KEYS + ("datasourceId",)
+
+    class _ExtendedParser(PalantirParser):
+        def _make_ontology_parser(self) -> PalantirOntologyParser:
+            return _ExtendedOntologyParser()
+
+    export = _write_export_with_datasource(
+        tmp_path / "export",
+        {"datasourceId": "ri.datasource.1", "backingResourceRid": "ri.ot.1"},
+    )
+
+    with pytest.raises(ValueError, match="must be non-empty"):
+        PalantirParser().parse(export)
+
+    model = _ExtendedParser().parse(export)
+    assert _sole_data_source(model).backing_datasource_id() == "ri.datasource.1"

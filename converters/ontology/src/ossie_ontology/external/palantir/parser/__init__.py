@@ -136,11 +136,33 @@ class PalantirDataSetParser:
 class PalantirOntologyParser:
     _model: Ontology
 
+    #: Keys under which a datasource carries its own identifier, most preferred
+    #: first. Exports up to the `datasourceRid` era use that name; newer ones
+    #: (those that also carry a `version` of `v1`/`v2`/`v3`) call it `rid`.
+    #: Override in a subclass to teach the parser a further spelling.
+    DATASOURCE_RID_KEYS: tuple[str, ...] = ("datasourceRid", "rid")
+
     def __init__(self):
         self._model = Ontology()
 
     def model(self):
         return self._model
+
+    def _datasource_rid(self, raw_data_source: dict) -> str:
+        """The datasource's own identifier, under whichever key this export uses.
+
+        Read through here rather than off a fixed key so a new export format is
+        a one-line addition to :attr:`DATASOURCE_RID_KEYS`, and so callers never
+        have to rewrite the incoming JSON to make it look like an older version.
+
+        Returns the empty string when no key carries a value, leaving the
+        caller's own "must be non-empty" check to report it.
+        """
+        for key in self.DATASOURCE_RID_KEYS:
+            value = norm(raw_data_source.get(key))
+            if value:
+                return value
+        return ""
 
     def parse(self, file: IOBase):
         data = json.load(file)
@@ -218,7 +240,7 @@ class PalantirOntologyParser:
                 object_type._data_sources.append(DataSource(readable_id, readable_id))
             else:
                 for data_source in data_sources:
-                    datasource_rid = norm(data_source.get("datasourceRid"))
+                    datasource_rid = self._datasource_rid(data_source)
                     backing_resource_rid = norm(data_source.get("backingResourceRid"))
 
                     if not datasource_rid or not backing_resource_rid:
@@ -494,7 +516,7 @@ class PalantirOntologyParser:
         if len(join_table_data_source) != 1:
             raise ValueError("Relation definition must contain exactly one `joinTableDatasource`")
 
-        datasource_rid = norm(join_table_data_source[0].get("datasourceRid"))
+        datasource_rid = self._datasource_rid(join_table_data_source[0])
         backing_resource_rid = norm(join_table_data_source[0].get("backingResourceRid"))
 
         if not datasource_rid or not backing_resource_rid:
@@ -656,7 +678,19 @@ class PalantirParser:
             finally:
                 fh.close()
         if not any_json:
-            raise ValueError("'data_sets' folder contains no JSON files")
+            # No datasets is a shape some exports genuinely have, not a broken
+            # one: the ontology JSON alone carries every object type, property,
+            # key and link, so the model below is built in full. What it will
+            # not have is any weaving — nothing maps a concept to the table
+            # behind it — so it type-checks and then answers every query with
+            # nothing. Loud enough to notice, not fatal.
+            warnings.warn(
+                "'data_sets' folder contains no JSON files. The ontology will be "
+                "built from the ontology JSON alone: valid, but with no mappings "
+                "connecting its concepts to source tables, so queries against it "
+                "return nothing.",
+                stacklevel=2,
+            )
 
         parser = self._make_ontology_parser()
         parser.parse(ontology_stream)
@@ -690,10 +724,13 @@ class PalantirParser:
 
     def _validate_archive(self, zf: zipfile.ZipFile):
         """
-        Ensure the ZIP archive contains a required 'data_sets/' directory.
-        Accept either:
+        Warn when the ZIP archive carries no 'data_sets/' directory. Accepts:
           - Top-level 'data_sets/' folder, or
           - A single-root folder with 'root/data_sets/' inside.
+
+        Missing datasets is a warning rather than an error — see
+        :func:`ossie_ontology.common.file_utils.validate_dir` for why, and for
+        what it costs.
         """
         names = zf.namelist()
 
@@ -714,7 +751,13 @@ class PalantirParser:
             if has_rooted_data_sets:
                 return
 
-        raise ValueError("Archive does not contain required 'data_sets' folder")
+        # Same reasoning as the directory path: buildable ontology, no weaving.
+        warnings.warn(
+            "Archive contains no 'data_sets' folder. The ontology will be built "
+            "from the ontology JSON alone: valid, but with no mappings connecting "
+            "its concepts to source tables, so queries against it return nothing.",
+            stacklevel=2,
+        )
 
     def _get_ontology_json_file_path(self, zf: zipfile.ZipFile) -> str:
         """

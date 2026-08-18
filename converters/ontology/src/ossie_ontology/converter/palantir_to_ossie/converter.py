@@ -35,6 +35,8 @@ from ossie_ontology.external.palantir.model import (
     Ontology as PalantirOntology,
     Property as PalantirProperty,
     Relation,
+    Resource,
+    Status,
 )
 from ossie_ontology.model import (
     Concept,
@@ -73,6 +75,61 @@ class PalantirToOssieConverter:
 
     depths_role_names = {1: "fst", 2: "snd", 3: "thd", 4: "frt"}
 
+    OBJECT_TYPE_STATUSES: frozenset = frozenset({Status.ACTIVE, Status.ENDORSED, Status.INTERMEDIARY})
+    PROPERTY_STATUSES: frozenset = frozenset({Status.ACTIVE, Status.EXPERIMENTAL, Status.INTERMEDIARY})
+    MAPPING_PROPERTY_STATUSES: frozenset = frozenset({Status.ACTIVE, Status.INTERMEDIARY})
+    RELATION_STATUSES: frozenset = frozenset({Status.ACTIVE, Status.INTERMEDIARY})
+    RELATION_ENDPOINT_STATUSES: frozenset = frozenset({Status.ACTIVE})
+    SUBTYPE_RELATION_STATUSES: frozenset = frozenset({Status.ACTIVE})
+
+    def allowed_object_type_statuses(self) -> frozenset:
+        """Statuses an object type must have to become a concept."""
+        return self.OBJECT_TYPE_STATUSES
+
+    def allowed_property_statuses(self) -> frozenset:
+        """Statuses a property must have to become a concept relationship."""
+        return self.PROPERTY_STATUSES
+
+    def allowed_mapping_property_statuses(self) -> frozenset:
+        """Statuses a property must have to be wired into a concept mapping."""
+        return self.MAPPING_PROPERTY_STATUSES
+
+    def allowed_relation_statuses(self) -> frozenset:
+        """Statuses a relation must have to be converted outright.
+
+        Separate from this, an EXPERIMENTAL relation is still converted when
+        every object type it connects is allowed by
+        :meth:`allowed_relation_endpoint_statuses`.
+        """
+        return self.RELATION_STATUSES
+
+    def allowed_relation_endpoint_statuses(self) -> frozenset:
+        """Statuses required of the endpoints of an EXPERIMENTAL relation."""
+        return self.RELATION_ENDPOINT_STATUSES
+
+    def allowed_subtype_relation_statuses(self) -> frozenset:
+        """Statuses a relation must have to be read as inheritance.
+
+        Narrower than :meth:`allowed_relation_statuses` by default: an ordinary
+        relation that turns out to be unusable costs one relationship, while a
+        subtype relation restructures the concept graph — the subtype loses its
+        own identifiers and inherits the supertype's — so only settled ones are
+        honoured. As with plain relations, an EXPERIMENTAL subtype relation is
+        still read when both endpoints pass
+        :meth:`allowed_relation_endpoint_statuses`.
+        """
+        return self.SUBTYPE_RELATION_STATUSES
+
+    def _object_type_allowed(self, ot: ObjectType) -> bool:
+        return ot.status() in self.allowed_object_type_statuses()
+
+    def _relation_endpoint_allowed(self, ot: ObjectType) -> bool:
+        return ot.status() in self.allowed_relation_endpoint_statuses()
+
+    @staticmethod
+    def _allowed(resource: Resource, statuses: frozenset) -> bool:
+        return resource.status() in statuses
+
     def __init__(self, formula_factory: FormulaFactory | None = None):
         self._formula_factory = formula_factory or FormulaFactory()
 
@@ -110,6 +167,52 @@ class PalantirToOssieConverter:
     # Concepts
     # ------------------------------------------------------------------
 
+    def _subtype_relations(self, palantir_ontology: PalantirOntology) -> dict[ObjectType, ManyToOneRelation]:
+        """The relations to read as inheritance, keyed by the subtype object type.
+
+        Palantir has no subtype construct. Inheritance shows up as a M:1
+        relation whose property map pairs primary key to primary key on both
+        sides: every instance of the one side is an instance of the many side,
+        identified the same way — which is what an Ossie `extends` says. A
+        relation that maps anything else is an ordinary reference and is
+        converted as one.
+
+        Reading it here rather than on the Palantir model keeps the status
+        policy in one place: a converter that admits experimental object types
+        sees the experimental inheritance between them by overriding the same
+        kind of hook it already overrides for everything else.
+        """
+        relation_statuses = self.allowed_subtype_relation_statuses()
+
+        result: dict[ObjectType, ManyToOneRelation] = {}
+        for rel in palantir_ontology.relations().values():
+            if not isinstance(rel, ManyToOneRelation):
+                continue
+
+            one_ot = rel.one_object_type()
+            many_ot = rel.many_object_type()
+
+            allowed = self._allowed(rel, relation_statuses) or (
+                rel.experimental()
+                and self._relation_endpoint_allowed(one_ot)
+                and self._relation_endpoint_allowed(many_ot)
+            )
+            if not allowed:
+                continue
+
+            if not rel.property_map():
+                continue
+
+            is_subtype = all(
+                mprop in many_ot.primary_keys() and oprop in one_ot.primary_keys()
+                for mprop, oprop in rel.property_map().items()
+            )
+
+            if is_subtype:
+                result[one_ot] = rel
+
+        return result
+
     def _convert_concepts(
         self,
         ontology: OntologyComponent,
@@ -119,7 +222,7 @@ class PalantirToOssieConverter:
         db_name: str,
         schema_name: str,
     ) -> None:
-        subtype_relations = palantir_ontology.subtypes_relations()
+        subtype_relations = self._subtype_relations(palantir_ontology)
 
         nodes = [ot.guid() for ot in palantir_ontology.object_types().values()]
         edges: list[tuple[str, str]] = []
@@ -139,7 +242,7 @@ class PalantirToOssieConverter:
 
         for ot_guid in order:
             ot = palantir_ontology.object_types()[ot_guid]
-            if ot.active() or ot.endorsed() or ot.intermediary():
+            if self._object_type_allowed(ot):
                 self._convert_object_type(
                     ontology,
                     semantic_model,
@@ -164,7 +267,8 @@ class PalantirToOssieConverter:
     ) -> None:
         concept_name = PalantirToOssieConverter._concept_name(ot)
         relevant_props = [
-            p for p in ot.properties().values() if p.active() or p.experimental() or p.intermediary()
+            p for p in ot.properties().values()
+            if self._allowed(p, self.allowed_property_statuses())
         ]
         concept: Concept | None = None
 
@@ -332,7 +436,7 @@ class PalantirToOssieConverter:
             children: list[LinkMapping] = []
             primary_keys = set(ot.primary_keys())
             for prop in ot.properties().values():
-                if not (prop.active() or prop.intermediary()):
+                if not self._allowed(prop, self.allowed_mapping_property_statuses()):
                     continue
                 if prop in primary_keys:
                     continue
@@ -386,24 +490,24 @@ class PalantirToOssieConverter:
         semantic_model: SemanticModel,
     ) -> None:
         for rel in palantir_ontology.relations().values():
-            if rel.active() or rel.intermediary():
+            if self._allowed(rel, self.allowed_relation_statuses()):
                 self._convert_relation(ontology, rel, concept_mappings, semantic_model)
             elif (
                 isinstance(rel, ManyToOneRelation)
                 and rel.experimental()
-                and rel.one_object_type().active()
-                and rel.many_object_type().active()
+                and self._relation_endpoint_allowed(rel.one_object_type())
+                and self._relation_endpoint_allowed(rel.many_object_type())
             ):
                 self._convert_relation(ontology, rel, concept_mappings, semantic_model)
 
         for ir in palantir_ontology.intermediary_relations().values():
-            if ir.active() or ir.intermediary():
+            if self._allowed(ir, self.allowed_relation_statuses()):
                 self._convert_intermediary_relation(ontology, palantir_ontology, ir)
             elif (
                 ir.experimental()
-                and ir.role_a_player().active()
-                and ir.role_b_player().active()
-                and ir.intermediary_player().active()
+                and self._relation_endpoint_allowed(ir.role_a_player())
+                and self._relation_endpoint_allowed(ir.role_b_player())
+                and self._relation_endpoint_allowed(ir.intermediary_player())
             ):
                 self._convert_intermediary_relation(ontology, palantir_ontology, ir)
 
@@ -795,7 +899,18 @@ class PalantirToOssieConverter:
             column_name = pk_mapping[ds_guid]
         if not column_name:
             return None
-        field = dataset.field(PalantirToOssieConverter._normalize_field_name(column_name))
+        normalized = PalantirToOssieConverter._normalize_field_name(column_name)
+        field = dataset.field(normalized)
+        if not field:
+            # Fall back to a case-insensitive match. The two halves of an export
+            # routinely disagree on case — `primaryKeyMapping` names the physical
+            # warehouse column (`LOCNO`) while the property carries the API
+            # spelling (`locno`) — and an unquoted Snowflake identifier is
+            # case-insensitive anyway, so treating them as distinct only loses
+            # the mapping. Exact match still wins, so a source that genuinely
+            # relies on quoted, case-sensitive columns is unaffected.
+            lowered = normalized.lower()
+            field = next((f for f in dataset.fields if f.name.lower() == lowered), None)
         if not field:
             warnings.warn(f"Dataset '{dataset.name}' does not contain a field named '{column_name}'")
         return field

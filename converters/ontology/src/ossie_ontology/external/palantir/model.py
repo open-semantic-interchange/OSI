@@ -297,36 +297,6 @@ class Ontology:
 
         return "\n".join(result)
 
-    def subtypes_relations(self) -> dict[ObjectType, ManyToOneRelation]:
-        result: dict[ObjectType, ManyToOneRelation] = {}
-        for rel in self._relations.values():
-            if not isinstance(rel, ManyToOneRelation):
-                continue
-
-            rel_exp_eligible = (
-                    rel.experimental()
-                    and rel.one_object_type().active()
-                    and rel.many_object_type().active()
-            )
-            if not (rel.active() or rel_exp_eligible):
-                continue
-
-            one_ot = rel.one_object_type()
-            many_ot = rel.many_object_type()
-
-            if not rel.property_map():
-                continue
-
-            is_subtype = all(
-                mprop in many_ot.primary_keys() and oprop in one_ot.primary_keys()
-                for mprop, oprop in rel.property_map().items()
-            )
-
-            if is_subtype:
-                result[one_ot] = rel
-
-        return result
-
 # An ObjectType is Palantir's analog of an EntityType. Its instances are
 # identified by its primary-key Properties, which appear in the JSON as
 # ReadingIds in an array, e.g.:
