@@ -43,11 +43,13 @@ Usage:
 
 import json
 import sys
+from collections.abc import Hashable
 from pathlib import Path
 
 try:
     import yaml
     from jsonschema import Draft202012Validator
+    from yaml.constructor import ConstructorError
 except ImportError:
     print("Missing dependencies. Install with:")
     print("  pip install pyyaml jsonschema")
@@ -73,6 +75,43 @@ DIALECT_MAP = {
 
 # Dialects that sqlglot cannot parse
 SKIP_SQL_VALIDATION = {"MDX", "TABLEAU", "MAQL"}
+
+
+class UniqueKeyLoader(yaml.SafeLoader):
+    """Safe YAML loader that rejects duplicate explicit mapping keys."""
+
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict:
+        seen = set()
+        merge_tag = "tag:yaml.org,2002:merge"
+        merge_key = object()
+
+        for key_node, _ in node.value:
+            if key_node.tag == merge_tag:
+                key = merge_key
+                display_key = "<<"
+            else:
+                key = self.construct_object(key_node, deep=deep)
+                display_key = key
+
+            if not isinstance(key, Hashable):
+                raise ConstructorError(
+                    "while constructing a mapping",
+                    node.start_mark,
+                    "found an unhashable key",
+                    key_node.start_mark,
+                )
+
+            if key in seen:
+                raise ConstructorError(
+                    "while constructing a mapping",
+                    node.start_mark,
+                    f"found duplicate key {display_key!r}",
+                    key_node.start_mark,
+                )
+            seen.add(key)
+
+        # Delegate construction (including merge-key flattening) to SafeLoader.
+        return super().construct_mapping(node, deep=deep)
 
 
 def validate_schema(data: dict, schema: dict) -> list[str]:
@@ -267,7 +306,7 @@ def main():
 
     with open(yaml_path) as f:
         try:
-            data = yaml.safe_load(f)
+            data = yaml.load(f, Loader=UniqueKeyLoader)
         except yaml.YAMLError as e:
             print(f"Error: Invalid YAML: {e}")
             sys.exit(1)
