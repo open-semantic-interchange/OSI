@@ -159,6 +159,10 @@
             "type": "string"
           },
           "description": "Natural language expressions that verbalize this relationship"
+        },
+        "uri": {
+          "type": "string",
+          "description": "Optional global identifier for this relationship, expressed as a full URI or as a QName (prefix:local) resolved against the ontology-level 'prefixes' map."
         }
       },
       "required": ["name", "verbalizes"],
