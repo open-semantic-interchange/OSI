@@ -58,6 +58,7 @@ Supported SQL and expression language dialects for metrics and field definitions
 | `DATABRICKS` | Databricks SQL |
 | `MAQL` | GoodData MAQL (Metric Analysis and Query Language) |
 | `BIGQUERY` | Google BigQuery (GoogleSQL) |
+| `DAX` | Data Analysis Expressions (Power BI / Analysis Services) |
 
 ### Data types
 
@@ -446,6 +447,7 @@ The following are well-known examples:
 | `GOODDATA` | GoodData-specific attributes |
 | `HONEYDEW` | Honeydew-specific attributes |
 | `WISDOM` | WisdomAI-specific attributes |
+| `POWER_BI` | Power BI / Fabric semantic model-specific attributes |
 
 ### Examples
 
