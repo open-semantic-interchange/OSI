@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from collections.abc import Hashable
 from pathlib import Path
 
 import yaml
@@ -37,7 +38,7 @@ class UniqueKeyLoaderTest(unittest.TestCase):
     def load(self, content: str):
         return yaml.load(content, Loader=UniqueKeyLoader)
 
-    def assert_duplicate_key(self, content: str, key: str):
+    def assert_duplicate_key(self, content: str, key: Hashable):
         with self.assertRaisesRegex(
             yaml.constructor.ConstructorError,
             rf"found duplicate key {key!r}",
@@ -144,6 +145,152 @@ class UniqueKeyLoaderTest(unittest.TestCase):
         error = caught.exception
         self.assertEqual(error.context_mark.line, 0)
         self.assertEqual(error.problem_mark.line, 1)
+
+    def assert_unhashable_key(self, content: str):
+        with self.assertRaisesRegex(
+            yaml.constructor.ConstructorError,
+            "found an unhashable key",
+        ):
+            self.load(content)
+
+    def test_rejects_duplicate_inside_inline_merge_source(self):
+        # flatten_mapping() recurses into a merge source without constructing it
+        # as a mapping, so the duplicate is only visible before construction.
+        self.assert_duplicate_key(
+            "dataset:\n  <<: {name: orders, name: customers}\n",
+            "name",
+        )
+
+    def test_rejects_duplicate_inside_anchored_merge_source(self):
+        self.assert_duplicate_key(
+            "defaults: &defaults\n"
+            "  source: staging.orders\n"
+            "  source: production.orders\n"
+            "dataset:\n"
+            "  <<: *defaults\n",
+            "source",
+        )
+
+    def test_allows_merge_override_reused_through_alias(self):
+        # flatten_mapping() rewrites the anchored mapping in place while building
+        # "first"; "second" must still be judged against the authored keys.
+        loaded = self.load(
+            "first:\n"
+            "  <<: &defaults\n"
+            "    <<: &base\n"
+            "      source: staging.orders\n"
+            "    source: production.orders\n"
+            "second: *defaults\n"
+        )
+
+        self.assertEqual(loaded["first"]["source"], "production.orders")
+        self.assertEqual(loaded["second"]["source"], "production.orders")
+
+    def test_allows_merge_override_alias_before_merge_consumer(self):
+        # Same document as above with the alias resolved first: the verdict must
+        # not depend on the order in which mappings are constructed.
+        loaded = self.load(
+            "anchors:\n"
+            "  defaults: &defaults\n"
+            "    <<: &base\n"
+            "      source: staging.orders\n"
+            "    source: production.orders\n"
+            "second: *defaults\n"
+            "first:\n"
+            "  <<: *defaults\n"
+        )
+
+        self.assertEqual(loaded["first"]["source"], "production.orders")
+        self.assertEqual(loaded["second"]["source"], "production.orders")
+
+    def test_allows_sequence_form_merge(self):
+        loaded = self.load(
+            "base: &base\n  source: staging.orders\n"
+            "extra: &extra\n  owner: analytics\n"
+            "dataset:\n  <<: [*base, *extra]\n  name: orders\n"
+        )
+
+        self.assertEqual(loaded["dataset"]["source"], "staging.orders")
+        self.assertEqual(loaded["dataset"]["owner"], "analytics")
+        self.assertEqual(loaded["dataset"]["name"], "orders")
+
+    def test_rejects_duplicate_inside_sequence_element(self):
+        self.assert_duplicate_key(
+            "datasets:\n  - name: orders\n    source: a\n    source: b\n",
+            "source",
+        )
+
+    def test_rejects_unhashable_mapping_key(self):
+        # SafeLoader cannot use a collection as a key; the loader rejects such a
+        # key directly rather than constructing it during the pre-construction walk.
+        self.assert_unhashable_key("? {name: orders}\n: value\n")
+
+    def test_rejects_unhashable_sequence_key(self):
+        self.assert_unhashable_key("? [orders, customers]\n: value\n")
+
+    def test_unhashable_key_error_reports_both_locations(self):
+        with self.assertRaises(yaml.constructor.ConstructorError) as caught:
+            self.load("name: sales\n? {name: orders}\n: value\n")
+
+        error = caught.exception
+        self.assertEqual(error.context_mark.line, 0)
+        self.assertEqual(error.problem_mark.line, 1)
+
+    def test_rejects_equivalent_integer_spellings(self):
+        # Keys are compared as constructed scalars, so 01 (octal) equals 1.
+        self.assert_duplicate_key("1: first\n01: second\n", 1)
+
+    def test_rejects_equivalent_boolean_spellings(self):
+        self.assert_duplicate_key("yes: first\ntrue: second\n", True)
+
+    def test_rejects_boolean_key_equal_to_integer_key(self):
+        # Documented consequence of comparing constructed scalars: True == 1, and
+        # SafeLoader would otherwise collapse the two keys into one dict entry.
+        self.assert_duplicate_key("1: first\ntrue: second\n", True)
+
+    def test_allows_quoted_and_integer_keys_that_differ(self):
+        loaded = self.load('"1": quoted\n1: integer\n')
+
+        self.assertEqual(loaded["1"], "quoted")
+        self.assertEqual(loaded[1], "integer")
+
+    def test_rejects_duplicate_in_later_document(self):
+        # Loader-level coverage only: validate.py loads a single document.
+        with self.assertRaisesRegex(
+            yaml.constructor.ConstructorError,
+            r"found duplicate key 'name'",
+        ):
+            list(
+                yaml.load_all(
+                    "name: sales\n---\nname: finance\nname: ops\n",
+                    Loader=UniqueKeyLoader,
+                )
+            )
+
+    def test_allows_valid_multi_document_input(self):
+        loaded = list(
+            yaml.load_all("name: sales\n---\nname: finance\n", Loader=UniqueKeyLoader)
+        )
+
+        self.assertEqual([document["name"] for document in loaded], ["sales", "finance"])
+
+    def test_allows_recursive_mapping_alias(self):
+        # The pre-pass walks the node graph, so a self-referencing anchor must be
+        # guarded by node identity or the walk would not terminate.
+        loaded = self.load("root: &root\n  self: *root\n")
+
+        self.assertIs(loaded["root"]["self"], loaded["root"])
+
+    def test_allows_recursive_sequence_alias(self):
+        loaded = self.load("root: &root [*root]\n")
+
+        self.assertIs(loaded["root"][0], loaded["root"])
+
+    def test_rejects_duplicate_in_recursive_mapping_alias(self):
+        self.assert_duplicate_key(
+            "root: &root\n  self: *root\n  self: other\n",
+            "self",
+        )
 
 
 class ValidatorIntegrationTest(unittest.TestCase):
