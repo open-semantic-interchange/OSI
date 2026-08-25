@@ -693,17 +693,28 @@ def quoted_char_mask(sql):
     to contain `SUM(`, and treating it as a call produced a bogus hidden measure and
     malformed SQL. So single quotes, double quotes and backticks are all opaque here.
     """
+    text = str(sql)
     mask, quote = [], None
-    for ch in str(sql):
+    i = 0
+    while i < len(text):
+        ch = text[i]
         if quote:
             mask.append(True)
             if ch == quote:
+                # SQL escapes a quote delimiter by doubling it. Both characters
+                # remain inside the quoted run; neither closes and immediately
+                # reopens it, which would expose the text between later delimiters.
+                if i + 1 < len(text) and text[i + 1] == quote:
+                    mask.append(True)
+                    i += 2
+                    continue
                 quote = None
         elif ch in "'\"`":
             mask.append(True)
             quote = ch
         else:
             mask.append(False)
+        i += 1
     return mask
 
 
@@ -732,22 +743,14 @@ def resolve_identifier(mapping, written):
 def source_part_count(source):
     """How many identifier parts a dotted dataset `source` has, or None for a query.
 
-    Dots inside double quotes or backticks belong to a quoted identifier, not to the
-    path -- `"My.Catalog".public.t` is three parts, not four.
+    Dots inside single quotes, double quotes or backticks belong to a quoted identifier,
+    not to the path -- `"My.Catalog".public.t` is three parts, not four.
     """
     s = str(source).strip()
     if re.match(r"(?i)(select|with)\b", s):
         return None
-    parts, quote = 1, None
-    for ch in s:
-        if quote:
-            if ch == quote:
-                quote = None
-        elif ch in '"`':
-            quote = ch
-        elif ch == ".":
-            parts += 1
-    return parts
+    mask = quoted_char_mask(s)
+    return 1 + sum(ch == "." and not mask[i] for i, ch in enumerate(s))
 
 
 def sql_is_reversible(sql, plain_members=(), own_cube=None, own_measures=(),
@@ -1260,30 +1263,40 @@ def _mask_parenthesized(run):
     return "".join(out)
 
 
-def _split_top_level_and(where):
-    """Split `(f1) AND (f2)` into [f1, f2], or None when not that exact shape."""
-    pieces, start, depth, quote = [], 0, 0, None
+_AND_TOKEN_RE = re.compile(r"\s+AND\s+", re.IGNORECASE)
+
+
+def split_sql_conjunctions(sql):
+    """Split top-level SQL `AND` tokens, ignoring quotes and parentheses."""
+    text = str(sql)
+    mask = quoted_char_mask(text)
+    pieces, start, depth = [], 0, 0
     i = 0
-    while i < len(where):
-        ch = where[i]
-        if quote:
-            if ch == quote:
-                quote = None
-        elif ch in "'\"":
-            quote = ch
-        elif ch == "(":
+    while i < len(text):
+        ch = text[i]
+        if mask[i]:
+            i += 1
+            continue
+        if ch == "(":
             depth += 1
         elif ch == ")":
             depth -= 1
-        elif depth == 0 and where.startswith(" AND ", i):
-            pieces.append(where[start:i])
-            i += len(" AND ")
-            start = i
-            continue
+        elif depth == 0:
+            match = _AND_TOKEN_RE.match(text, i)
+            if match is not None and not any(mask[i:match.end()]):
+                pieces.append(text[start:i])
+                i = match.end()
+                start = i
+                continue
         i += 1
-    pieces.append(where[start:])
+    pieces.append(text[start:])
+    return pieces
+
+
+def _split_top_level_and(where):
+    """Split `(f1) AND (f2)` into [f1, f2], or None when not that exact shape."""
     out = []
-    for piece in pieces:
+    for piece in split_sql_conjunctions(where):
         if not (piece.startswith("(") and piece.endswith(")")):
             return None
         out.append(piece[1:-1])
@@ -1300,7 +1313,11 @@ DISTINCT_RE = re.compile(r"^DISTINCT\s+(.+)$", re.IGNORECASE | re.DOTALL)
 
 def balanced_parens(s):
     depth = 0
-    for ch in s:
+    text = str(s)
+    mask = quoted_char_mask(text)
+    for i, ch in enumerate(text):
+        if mask[i]:
+            continue
         if ch == "(":
             depth += 1
         elif ch == ")":

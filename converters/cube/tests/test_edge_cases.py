@@ -298,6 +298,7 @@ def test_field_and_metric_foreign_extensions_survive_the_round_trip():
     ("public.orders", 2, True),
     ("tpcds.public.orders", 3, False),
     ('"My.Catalog".public.orders', 3, False),   # dots inside quotes are not parts
+    ("'My.Schema'.orders", 2, True),           # nor are dots inside single quotes
     ("a.b.c.d", 4, False),
 ])
 def test_a_source_that_other_converters_reject_is_reported(sql_table, parts, warns):
@@ -310,7 +311,7 @@ def test_a_source_that_other_converters_reject_is_reported(sql_table, parts, war
         "cubes:\n"
         "  - name: orders\n"
         # Single-quoted so a value containing double quotes stays one YAML scalar.
-        f"    sql_table: '{sql_table}'\n"))
+        f"    sql_table: '{sql_table.replace(chr(39), chr(39) * 2)}'\n"))
     _, issues = convert_cube_to_ossie(files)
     reported = issues.of_type(IssueType.SOURCE_NOT_FULLY_QUALIFIED)
     assert bool(reported) is warns
@@ -2479,3 +2480,136 @@ def test_distinct_inside_an_unmodelled_call_is_idempotent(expr, unsafe):
 
     datasets, unqualified = unsafe_aggregate_datasets(expr)
     assert bool(datasets or unqualified) is unsafe
+
+
+# --- maintainer review ----------------------------------------------------------
+
+@pytest.mark.parametrize("part", ["latitude", "longitude"])
+def test_a_geo_coordinate_must_be_a_mapping(part):
+    latitude = "lat" if part == "latitude" else "\n          sql: lat"
+    longitude = "lon" if part == "longitude" else "\n          sql: lon"
+    files = _files(users=(
+        "cubes:\n"
+        "  - name: users\n"
+        "    sql_table: public.users\n"
+        "    dimensions:\n"
+        "      - name: home\n"
+        "        type: geo\n"
+        f"        latitude: {latitude}\n"
+        f"        longitude: {longitude}\n"
+    ))
+    with pytest.raises(ConversionError, match=rf"'{part}' must be a mapping"):
+        convert_cube_to_ossie(files)
+
+
+def test_join_and_inside_a_string_literal_is_not_a_clause_separator():
+    files = _files(
+        orders=(
+            "cubes:\n"
+            "  - name: orders\n"
+            "    sql_table: public.orders\n"
+            "    joins:\n"
+            "      - name: users\n"
+            "        sql: \"COALESCE({CUBE}.user_id, 'OPEN AND PENDING') = "
+            "{users}.id\"\n"
+            "        relationship: many_to_one\n"),
+        users=(
+            "cubes:\n"
+            "  - name: users\n"
+            "    sql_table: public.users\n"),
+    )
+    ossie, back, issues = _roundtrip(files)
+    assert parse_files(back) == parse_files(files)
+    parked = [issue for issue in issues.of_type(IssueType.PARKED_IN_META)
+              if issue.element_name == "join 'orders' -> 'users'"]
+    assert len(parked) == 1
+    assert "OPEN AND PENDING" in parked[0].detail
+    assert model_of(ossie).get("relationships") is None
+
+
+def test_an_empty_rolling_window_is_still_windowed():
+    files = _files(orders=(
+        "cubes:\n"
+        "  - name: orders\n"
+        "    sql_table: public.orders\n"
+        "    measures:\n"
+        "      - name: rolling\n"
+        "        sql: amount\n"
+        "        type: sum\n"
+        "        rolling_window: {}\n"
+    ))
+    ossie, issues = convert_cube_to_ossie(files)
+    assert model_of(ossie).get("metrics") is None
+    assert stash_of(model_of(ossie)["datasets"][0])["extra_measures"] == [
+        {"index": 0, "measure": {
+            "name": "rolling", "sql": "amount", "type": "sum",
+            "rolling_window": {}}}]
+    assert [issue.element_name for issue in issues.of_type(
+        IssueType.MULTI_STAGE_MEASURE_PARKED)] == ["orders.rolling"]
+
+
+def test_a_stashed_join_without_a_primary_key_is_reported_on_export():
+    files = _files(
+        orders=(
+            "cubes:\n"
+            "  - name: orders\n"
+            "    sql_table: public.orders\n"
+            "    joins:\n"
+            "      - name: users\n"
+            "        sql: \"COALESCE({CUBE}.user_id, 0) = {users}.id\"\n"
+            "        relationship: many_to_one\n"),
+        users=(
+            "cubes:\n"
+            "  - name: users\n"
+            "    sql_table: public.users\n"),
+    )
+    ossie, _ = convert_cube_to_ossie(files)
+    _, issues = convert_ossie_to_cube(ossie)
+    warnings = issues.of_type(IssueType.DROPPED_NO_CUBE_EQUIVALENT)
+    assert any(issue.element_name == "dataset 'orders'" and
+               "requires a primary key" in issue.detail for issue in warnings)
+
+
+def test_a_falsy_stashed_measure_sql_is_restored_verbatim():
+    ossie = (
+        "version: 0.2.0.dev0\n"
+        "semantic_model:\n"
+        "- name: shop\n"
+        "  datasets:\n"
+        "  - name: orders\n"
+        "    source: public.orders\n"
+        "  metrics:\n"
+        "  - name: zero\n"
+        "    expression:\n"
+        "      dialects:\n"
+        "      - dialect: ANSI_SQL\n"
+        "        expression: '0'\n"
+        "    custom_extensions:\n"
+        "    - vendor_name: CUBE\n"
+        "      data: '{\"_v\": 1, \"sql\": 0, \"type\": \"number\"}'\n"
+    )
+    files, _ = convert_ossie_to_cube(ossie)
+    measure = parse(files["model/cubes/orders.yml"])["cubes"][0]["measures"][0]
+    assert measure == {"name": "zero", "sql": 0, "type": "number"}
+
+
+def test_parentheses_inside_a_string_do_not_change_aggregate_classification():
+    from ossie_cube._common import classify_metric_expression
+
+    assert classify_metric_expression("SUM(')')") == ("sum", "')'", [])
+
+
+def test_matching_an_aggregate_parenthesis_ignores_backtick_identifiers():
+    from ossie_cube.expressions import _match_paren
+
+    expression = "SUM(`cost(foo`)"
+    assert _match_paren(expression, 3) == len(expression) - 1
+
+
+def test_filter_splitting_ignores_and_inside_a_backtick_identifier():
+    from ossie_cube._common import unfold_filtered_operand
+
+    folded = ("CASE WHEN (`status AND state` = 1) AND (amount > 0) "
+              "THEN amount END")
+    assert unfold_filtered_operand(folded) == (
+        "amount", ["`status AND state` = 1", "amount > 0"])

@@ -312,6 +312,13 @@ def _build_cube(ds, plan, tables, joins, measures, join_extensions, dialect,
     cube_extras = dict(stash.get("cube_extras") or {})
     stashed_meta = cube_extras.pop("meta", None)
 
+    output_joins = list(joins or [])
+    # Joins a prior import could not represent go back at their original indices.
+    # Merge them before primary-key validation: Cube requires a key for these joins
+    # just as it does for relationships represented natively in Ossie.
+    for item in sorted(stash.get("extra_joins") or [], key=lambda x: x.get("index", 0)):
+        output_joins.insert(min(item.get("index", 0), len(output_joins)), item["join"])
+
     dimensions, by_name_scalar, by_column, by_name_computed = _build_dimensions(
         ds, plan, tables, dialect, issues)
     # Resolve each `primary_key` entry to the dimension Cube should mark. A
@@ -376,7 +383,7 @@ def _build_cube(ds, plan, tables, joins, measures, join_extensions, dialect,
                    f"no primary_key, so the first unique_keys entry "
                    f"({', '.join(plan.primary_key)}) is marked as the Cube primary key; "
                    f"Cube requires one on any cube that declares a join")
-    if joins and not pk_names:
+    if output_joins and not pk_names:
         issues.add(IssueType.DROPPED_NO_CUBE_EQUIVALENT, scope,
                    "declares a relationship but no primary_key or unique_keys, and Cube "
                    "requires a primary key on any cube with a join ('primary key for "
@@ -400,12 +407,8 @@ def _build_cube(ds, plan, tables, joins, measures, join_extensions, dialect,
     if dimensions:
         cube["dimensions"] = [_ordered(d, _DIM_KEY_ORDER) for d in dimensions]
 
-    joins = list(joins or [])
-    # Joins a prior import could not represent go back at their original indices.
-    for item in sorted(stash.get("extra_joins") or [], key=lambda x: x.get("index", 0)):
-        joins.insert(min(item.get("index", 0), len(joins)), item["join"])
-    if joins:
-        cube["joins"] = joins
+    if output_joins:
+        cube["joins"] = output_joins
     measures = [_ordered(m, _MEASURE_KEY_ORDER) for m in (measures or [])]
     # Measures a prior import could not express in Ossie (multi-stage ones) go back
     # at their original indices, interleaved with the ones rebuilt from metrics.
@@ -1466,8 +1469,9 @@ def _measure_from_expression(expr, target, mname, stash, plan, refs):
     if mtype == "count" and operand is None:
         measure["type"] = "count"
     else:
-        measure["sql"] = stash.get("sql") or refs.to_cube_sql(
-            operand, target, context=expr)
+        stashed_sql = stash.get("sql")
+        measure["sql"] = (stashed_sql if stashed_sql is not None
+                          else refs.to_cube_sql(operand, target, context=expr))
         measure["type"] = mtype
     if stash.get("filters"):
         # The original spellings, recorded because regeneration would not

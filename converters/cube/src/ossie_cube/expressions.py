@@ -153,15 +153,13 @@ def _scan_aggregates(text):
 
 def _match_paren(text, open_at):
     """Index of the `)` closing the `(` at `open_at`, honouring quotes."""
-    depth, quote = 0, None
+    mask = quoted_char_mask(text)
+    depth = 0
     for i in range(open_at, len(text)):
+        if mask[i]:
+            continue
         ch = text[i]
-        if quote:
-            if ch == quote:
-                quote = None
-        elif ch in "'\"":
-            quote = ch
-        elif ch == "(":
+        if ch == "(":
             depth += 1
         elif ch == ")":
             depth -= 1

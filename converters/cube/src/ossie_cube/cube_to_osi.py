@@ -68,6 +68,7 @@ from ._common import (
     require_str,
     snake,
     snake_keys,
+    split_sql_conjunctions,
     source_part_count,
     sql_is_reversible,
     unescape_braces_from_cube,
@@ -113,9 +114,6 @@ _RELATIONSHIP_ALIASES = {
     "has_one": "one_to_one",
     "one_to_one": "one_to_one",
 }
-
-_AND_SPLIT_RE = re.compile(r"\s+AND\s+", re.IGNORECASE)
-
 
 def convert_cube_to_ossie(files, model_name=None, view=None, strict_fanout=False):
     """Convert Cube model files ({relative filename: YAML str}) to Ossie YAML.
@@ -920,10 +918,22 @@ def _convert_geo_dimension(cname, dname, dim, issues):
     }
     out = []
     for part in ("latitude", "longitude"):
-        sub = (dim.get(part) or {}).get("sql")
+        coordinate = dim.get(part)
+        if coordinate is None:
+            raise ConversionError(
+                f"cube '{cname}': geo dimension '{dname}' is missing '{part}.sql'")
+        if not isinstance(coordinate, dict):
+            raise ConversionError(
+                f"cube '{cname}': geo dimension '{dname}': '{part}' must be a "
+                f"mapping containing 'sql', got {type(coordinate).__name__}")
+        sub = coordinate.get("sql")
         if sub is None:
             raise ConversionError(
                 f"cube '{cname}': geo dimension '{dname}' is missing '{part}.sql'")
+        if not isinstance(sub, str):
+            raise ConversionError(
+                f"cube '{cname}': geo dimension '{dname}': '{part}.sql' must be a "
+                f"string, got {type(sub).__name__}")
         expr, _ = cube_sql_to_ossie(sub, cname)
         field = {
             "name": f"{dname}_{part}",
@@ -1053,7 +1063,7 @@ def _decompose_join_sql(sql, own_cube, target, what, cubes, issues):
     returns None, and the caller preserves the join in the stash instead.
     """
     pairs = []
-    for clause in _AND_SPLIT_RE.split(sql):
+    for clause in split_sql_conjunctions(sql):
         sides = clause.split("=")
         if len(sides) != 2:
             issues.add(IssueType.PARKED_IN_META, what,
@@ -1484,7 +1494,10 @@ def _fanout_unsafe_datasets(expr, own_cube, dataset_names):
 def _windowing_key(measure):
     """The first windowing key present on a measure, or None."""
     for key in _WINDOWING_KEYS:
-        if measure.get(key):
+        # An empty rolling_window is meaningful in Cube: it selects the default
+        # trailing-30-day window. The other directives use falsy values to mean off.
+        if measure.get(key) or (key == "rolling_window" and key in measure
+                                and measure[key] is not None):
             return key
     return None
 
