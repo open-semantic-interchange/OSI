@@ -60,7 +60,12 @@ _TEMPORAL_DATA_TYPES = frozenset(
 
 
 class OSIVendor(str, Enum):
-    """Well-known vendor names for custom extensions."""
+    """Well-known vendor names for custom extensions.
+
+    Advisory only: ``OSICustomExtension.vendor_name`` is a free-form ``str``, so a
+    vendor outside this enum is valid. Keep in sync with the "Vendor Names" table in
+    ``core-spec/spec.md``, which is the canonical list.
+    """
 
     COMMON = "COMMON"
     SNOWFLAKE = "SNOWFLAKE"
@@ -68,8 +73,12 @@ class OSIVendor(str, Enum):
     DBT = "DBT"
     DATABRICKS = "DATABRICKS"
     GOODDATA = "GOODDATA"
+    HONEYDEW = "HONEYDEW"
     SEMANTIDO = "SEMANTIDO"
     WISDOM = "WISDOM"
+    OMNI = "OMNI"
+    NVIDIA_GSF = "NVIDIA_GSF"
+    MICROSOFT = "MICROSOFT"
 
 
 class OSIAIContextObject(BaseModel):
