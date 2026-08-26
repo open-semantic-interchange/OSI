@@ -16,16 +16,16 @@
 # under the License.
 
 """
-Bidirectional converter between OSI and Honeydew semantic model formats.
+Bidirectional converter between Ossie and Honeydew semantic model formats.
 
-OSI → Honeydew: Converts a single OSI YAML file into a Honeydew workspace
+Ossie → Honeydew: Converts a single Ossie YAML file into a Honeydew workspace
     directory (multiple YAML files per entity).
 
-Honeydew → OSI: Reads a Honeydew workspace directory and produces an OSI YAML.
+Honeydew → Ossie: Reads a Honeydew workspace directory and produces an Ossie YAML.
 
 Usage:
-    python converter.py osi-to-honeydew -i input.yaml -o output_dir/
-    python converter.py honeydew-to-osi -i workspace_dir/ -o output.yaml
+    ossie-honeydew ossie-to-honeydew -i input.yaml -o output_dir/
+    ossie-honeydew honeydew-to-ossie -i workspace_dir/ -o output.yaml
 """
 
 import argparse
@@ -38,23 +38,27 @@ from typing import Any
 
 import yaml
 
-SUPPORTED_OSI_VERSION = "0.2.0.dev0"
+SUPPORTED_OSSIE_VERSION = "0.2.0.dev0"
 HONEYDEW_VENDOR = "HONEYDEW"
-_OSI_METADATA_SECTION = "osi"
+_OSSIE_METADATA_SECTION = "ossie"
+# Workspaces written before the Ossie rebrand named the section "osi". Still
+# read it, so exporting such a workspace does not silently drop the fields it
+# preserves (ai_context, label, unique_keys, custom_extensions, vendors).
+_LEGACY_OSSIE_METADATA_SECTION = "osi"
 _HD_ATTR_KEYS = ("display_name", "hidden", "folder", "format_string", "timegrain")
 
 
 class HoneydewConversionError(Exception):
-    """Raised when conversion between OSI and Honeydew fails."""
+    """Raised when conversion between Ossie and Honeydew fails."""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# OSI → Honeydew
+# Ossie → Honeydew
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def convert_osi_to_honeydew(osi_yaml_str: str) -> dict[str, str]:
-    """Convert an OSI YAML string to a Honeydew workspace file tree.
+def convert_ossie_to_honeydew(ossie_yaml_str: str) -> dict[str, str]:
+    """Convert an Ossie YAML string to a Honeydew workspace file tree.
 
     Returns a dict mapping relative file paths to their YAML content strings.
     The caller writes these to disk under the desired output directory.
@@ -73,10 +77,10 @@ def convert_osi_to_honeydew(osi_yaml_str: str) -> dict[str, str]:
     stored in ``metadata`` for lossless round-tripping. ``unique_keys`` and
     non-Honeydew ``custom_extensions`` have no direct Honeydew equivalent and
     are stored in the Honeydew ``metadata`` section under a section named
-    ``"osi"`` so they can be recovered on the return trip.
+    ``"ossie"`` so they can be recovered on the return trip.
 
     Args:
-        osi_yaml_str: OSI YAML document as a string.
+        ossie_yaml_str: Ossie YAML document as a string.
 
     Returns:
         Dict of {relative_path: yaml_content}.
@@ -84,14 +88,14 @@ def convert_osi_to_honeydew(osi_yaml_str: str) -> dict[str, str]:
     Raises:
         HoneydewConversionError: On invalid or unsupported input.
     """
-    root = yaml.safe_load(osi_yaml_str)
+    root = yaml.safe_load(ossie_yaml_str)
     if not isinstance(root, dict):
-        raise HoneydewConversionError("Invalid OSI YAML: expected a mapping at the root")
+        raise HoneydewConversionError("Invalid Ossie YAML: expected a mapping at the root")
 
     version_str = str(root.get("version", ""))
-    if version_str != SUPPORTED_OSI_VERSION:
+    if version_str != SUPPORTED_OSSIE_VERSION:
         raise HoneydewConversionError(
-            f"Unsupported OSI version '{version_str}'. Supported: {SUPPORTED_OSI_VERSION}"
+            f"Unsupported Ossie version '{version_str}'. Supported: {SUPPORTED_OSSIE_VERSION}"
         )
 
     semantic_models = root.get("semantic_model")
@@ -100,7 +104,7 @@ def convert_osi_to_honeydew(osi_yaml_str: str) -> dict[str, str]:
 
     if len(semantic_models) > 1:
         warnings.warn(
-            f"OSI YAML contains {len(semantic_models)} semantic models; "
+            f"Ossie YAML contains {len(semantic_models)} semantic models; "
             "only the first will be converted"
         )
 
@@ -122,7 +126,7 @@ def _model_to_files(sm: dict[str, Any], *, extra_vendors: list[str] | None = Non
     # Preserve model-level ai_context, non-HONEYDEW custom_extensions, and extra vendors
     model_ai_ctx = sm.get("ai_context")
     model_ext = [e for e in (sm.get("custom_extensions") or []) if e.get("vendor_name") != HONEYDEW_VENDOR]
-    ws_meta = _build_osi_metadata(
+    ws_meta = _build_ossie_metadata(
         ai_context=model_ai_ctx,
         custom_extensions=model_ext or None,
         extra_vendors=extra_vendors or None,
@@ -138,14 +142,14 @@ def _model_to_files(sm: dict[str, Any], *, extra_vendors: list[str] | None = Non
 
     entity_names = [ds["name"] for ds in datasets if ds.get("name")]
 
-    # Group OSI relationships by from-entity
+    # Group Ossie relationships by from-entity
     rel_by_entity: dict[str, list[dict[str, Any]]] = {}
     for rel in relationships:
         from_ds = rel.get("from")
         if from_ds:
             rel_by_entity.setdefault(from_ds, []).append(rel)
 
-    # Assign OSI metrics to entities (honours HONEYDEW entity hint for round-trips)
+    # Assign Ossie metrics to entities (honours HONEYDEW entity hint for round-trips)
     metric_by_entity = _assign_metrics_to_entities(metrics, entity_names)
 
     for ds in datasets:
@@ -167,7 +171,7 @@ def _fields_to_honeydew(
     fields: list[dict[str, Any]],
     entity_name: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Classify OSI fields into Honeydew dataset attributes and calculated attributes."""
+    """Classify Ossie fields into Honeydew dataset attributes and calculated attributes."""
     dataset_attrs: list[dict[str, Any]] = []
     calc_attrs: list[dict[str, Any]] = []
 
@@ -180,7 +184,7 @@ def _fields_to_honeydew(
         if not expr or not expr.strip():
             continue
 
-        datatype = _osi_field_to_honeydew_datatype(field)
+        datatype = _ossie_field_to_honeydew_datatype(field)
         field_desc = field.get("description")
         field_label = field.get("label")
         field_ai_ctx = field.get("ai_context")
@@ -194,7 +198,7 @@ def _fields_to_honeydew(
             instr = field_ai_ctx["instructions"]
             effective_desc = f"{field_desc}\n{instr}" if field_desc else instr
 
-        # Build labels: OSI label + ai_context synonyms
+        # Build labels: Ossie label + ai_context synonyms
         labels: list[str] = []
         if field_label:
             labels.append(field_label)
@@ -203,7 +207,7 @@ def _fields_to_honeydew(
                 if syn not in labels:
                     labels.append(syn)
 
-        field_meta = _build_osi_metadata(
+        field_meta = _build_ossie_metadata(
             ai_context=field_ai_ctx if isinstance(field_ai_ctx, dict) else None,
             label=field_label if field_label and not isinstance(field_ai_ctx, dict) else None,
             custom_extensions=field_ext or None,
@@ -258,8 +262,8 @@ def _dataset_to_files(
     primary_key = ds.get("primary_key") or []
     unique_keys = ds.get("unique_keys")
     # A unique key identical to the primary key is re-derived from the entity's
-    # keys on the Honeydew → OSI path, so don't persist it as metadata — that
-    # would inject a redundant metadata block on a Honeydew → OSI → Honeydew round-trip.
+    # keys on the Honeydew → Ossie path, so don't persist it as metadata — that
+    # would inject a redundant metadata block on a Honeydew → Ossie → Honeydew round-trip.
     if unique_keys:
         pk_tuple = tuple(primary_key)
         unique_keys = [uk for uk in unique_keys if tuple(uk) != pk_tuple] or None
@@ -286,13 +290,13 @@ def _dataset_to_files(
 
     honeydew_relations = []
     for rel in relations:
-        hr = _osi_relation_to_honeydew(rel)
+        hr = _ossie_relation_to_honeydew(rel)
         if hr is not None:
             honeydew_relations.append(hr)
     entity_dict["relations"] = honeydew_relations
 
-    # Preserve OSI fields that have no Honeydew native equivalent
-    entity_meta = _build_osi_metadata(
+    # Preserve Ossie fields that have no Honeydew native equivalent
+    entity_meta = _build_ossie_metadata(
         ai_context=ai_context,
         unique_keys=unique_keys,
         custom_extensions=ds_ext or None,
@@ -306,7 +310,7 @@ def _dataset_to_files(
     dataset_attrs, calc_attrs = _fields_to_honeydew(fields, entity_name)
 
     # ── dataset YAML ───────────────────────────────────────────────────────────
-    source_sql, dataset_type = _parse_osi_source(ds.get("source", ""))
+    source_sql, dataset_type = _parse_ossie_source(ds.get("source", ""))
     dataset_dict: dict[str, Any] = {
         "type": "dataset",
         "entity": entity_name,
@@ -349,7 +353,7 @@ def _dataset_to_files(
             metric_dict["description"] = f"{existing}\n{metric_ai_ctx}".strip() if existing else metric_ai_ctx
 
         metric_ext = [e for e in (metric.get("custom_extensions") or []) if e.get("vendor_name") != HONEYDEW_VENDOR]
-        metric_meta = _build_osi_metadata(
+        metric_meta = _build_ossie_metadata(
             ai_context=metric_ai_ctx,
             custom_extensions=metric_ext or None,
         )
@@ -366,7 +370,7 @@ def _dataset_to_files(
     return files
 
 
-def _osi_relation_to_honeydew(rel: dict[str, Any]) -> dict[str, Any] | None:
+def _ossie_relation_to_honeydew(rel: dict[str, Any]) -> dict[str, Any] | None:
     rel_name = rel.get("name", "")
     to_ds = rel.get("to")
     if not to_ds:
@@ -437,7 +441,7 @@ def _pick_ansi_expression(expression: Any, field_name: str) -> str | None:
     return None
 
 
-def _osi_field_to_honeydew_datatype(field: dict[str, Any]) -> str:
+def _ossie_field_to_honeydew_datatype(field: dict[str, Any]) -> str:
     hd_ext = _get_honeydew_extension(field)
     if hd_ext.get("datatype"):
         return hd_ext["datatype"]
@@ -453,7 +457,7 @@ def _is_simple_identifier(expr: str) -> bool:
     return bool(re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", expr.strip()))
 
 
-def _parse_osi_source(source: str) -> tuple[str, str]:
+def _parse_ossie_source(source: str) -> tuple[str, str]:
     source = (source or "").strip()
     if not source:
         return ("", "table")
@@ -467,7 +471,7 @@ def _assign_metrics_to_entities(
     metrics: list[dict[str, Any]],
     entity_names: list[str],
 ) -> dict[str, list[dict[str, Any]]]:
-    """Assign each OSI metric to the most appropriate Honeydew entity.
+    """Assign each Ossie metric to the most appropriate Honeydew entity.
 
     Priority:
     1. HONEYDEW ``custom_extension`` entity hint (preserves round-trip placement)
@@ -480,7 +484,7 @@ def _assign_metrics_to_entities(
     for metric in metrics:
         mname = metric.get("name", "")
 
-        # Priority 1: HONEYDEW entity hint (set during Honeydew → OSI)
+        # Priority 1: HONEYDEW entity hint (set during Honeydew → Ossie)
         hinted = _get_honeydew_extension(metric).get("entity")
         if hinted and hinted in entity_set:
             result.setdefault(hinted, []).append(metric)
@@ -524,15 +528,15 @@ def _find_entity_in_expression(expr: str, entity_names: set[str]) -> str | None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Honeydew → OSI
+# Honeydew → Ossie
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def convert_honeydew_to_osi(workspace_dir: str) -> str:
-    """Convert a Honeydew workspace directory to an OSI YAML string.
+def convert_honeydew_to_ossie(workspace_dir: str) -> str:
+    """Convert a Honeydew workspace directory to an Ossie YAML string.
 
     Reads workspace.yml and all entity subdirectories under schema/. Honeydew
-    fields with no OSI equivalent (``owner``, ``display_name``, ``hidden``,
+    fields with no Ossie equivalent (``owner``, ``display_name``, ``hidden``,
     ``format_string``, ``timegrain``, attribute ``labels``) are preserved in a
     HONEYDEW ``custom_extension`` so they survive a round-trip back to Honeydew.
 
@@ -540,7 +544,7 @@ def convert_honeydew_to_osi(workspace_dir: str) -> str:
         workspace_dir: Path to the Honeydew workspace root.
 
     Returns:
-        OSI YAML document string.
+        Ossie YAML document string.
 
     Raises:
         HoneydewConversionError: On missing workspace.yml.
@@ -554,7 +558,7 @@ def convert_honeydew_to_osi(workspace_dir: str) -> str:
 
     model_name = workspace.get("name") or os.path.basename(workspace_dir.rstrip("/\\"))
     model_description = workspace.get("description")
-    ws_osi_meta = _read_osi_metadata(workspace)
+    ws_ossie_meta = _read_ossie_metadata(workspace)
 
     schema_dir = os.path.join(workspace_dir, "schema")
     entity_dirs: list[str] = []
@@ -564,48 +568,48 @@ def convert_honeydew_to_osi(workspace_dir: str) -> str:
             if os.path.isdir(os.path.join(schema_dir, d))
         )
 
-    osi_datasets: list[dict[str, Any]] = []
-    osi_relationships: list[dict[str, Any]] = []
-    osi_metrics: list[dict[str, Any]] = []
+    ossie_datasets: list[dict[str, Any]] = []
+    ossie_relationships: list[dict[str, Any]] = []
+    ossie_metrics: list[dict[str, Any]] = []
     seen_relationships: set[tuple] = set()
 
     for entity_name in entity_dirs:
         entity_dir = os.path.join(schema_dir, entity_name)
         entity_data = _read_entity_dir(entity_dir, entity_name)
 
-        osi_datasets.append(_entity_to_osi_dataset(entity_data))
+        ossie_datasets.append(_entity_to_ossie_dataset(entity_data))
 
         for rel in entity_data["relations"]:
-            osi_rel = _honeydew_relation_to_osi(
+            ossie_rel = _honeydew_relation_to_ossie(
                 rel, entity_name, seen_relationships
             )
-            if osi_rel is not None:
-                osi_relationships.append(osi_rel)
+            if ossie_rel is not None:
+                ossie_relationships.append(ossie_rel)
 
         for metric in entity_data["metrics"]:
-            osi_m = _honeydew_metric_to_osi(metric, entity_name)
-            if osi_m is not None:
-                osi_metrics.append(osi_m)
+            ossie_m = _honeydew_metric_to_ossie(metric, entity_name)
+            if ossie_m is not None:
+                ossie_metrics.append(ossie_m)
 
-    sm: dict[str, Any] = {"name": model_name, "datasets": osi_datasets}
+    sm: dict[str, Any] = {"name": model_name, "datasets": ossie_datasets}
     if model_description:
         sm["description"] = str(model_description).strip()
-    if ws_osi_meta.get("ai_context"):
-        sm["ai_context"] = ws_osi_meta["ai_context"]
+    if ws_ossie_meta.get("ai_context"):
+        sm["ai_context"] = ws_ossie_meta["ai_context"]
 
-    restored_ws_ext = ws_osi_meta.get("custom_extensions") or []
+    restored_ws_ext = ws_ossie_meta.get("custom_extensions") or []
     if restored_ws_ext:
         sm["custom_extensions"] = restored_ws_ext
 
-    if osi_relationships:
-        sm["relationships"] = osi_relationships
-    if osi_metrics:
-        sm["metrics"] = osi_metrics
+    if ossie_relationships:
+        sm["relationships"] = ossie_relationships
+    if ossie_metrics:
+        sm["metrics"] = ossie_metrics
 
-    extra_vendors = ws_osi_meta.get("vendors") or []
+    extra_vendors = ws_ossie_meta.get("vendors") or []
     vendors = [HONEYDEW_VENDOR] + [v for v in extra_vendors if v != HONEYDEW_VENDOR]
     root: dict[str, Any] = {
-        "version": SUPPORTED_OSI_VERSION,
+        "version": SUPPORTED_OSSIE_VERSION,
         "vendors": vendors,
         "semantic_model": [sm],
     }
@@ -622,7 +626,7 @@ def _read_entity_dir(entity_dir: str, entity_name: str) -> dict[str, Any]:
         "primary_dataset": None,
         "calculated_attributes": [],
         "metrics": [],
-        "osi_meta": {},
+        "ossie_meta": {},
         "honeydew_extra": {},
     }
 
@@ -634,7 +638,7 @@ def _read_entity_dir(entity_dir: str, entity_name: str) -> dict[str, Any]:
         data["description"] = ey.get("description")
         data["key_dataset"] = ey.get("key_dataset")
         data["relations"] = ey.get("relations") or []
-        data["osi_meta"] = _read_osi_metadata(ey)
+        data["ossie_meta"] = _read_ossie_metadata(ey)
         data["honeydew_extra"] = {
             k: ey[k] for k in ("owner", "display_name", "hidden", "folder", "labels")
             if k in ey
@@ -676,7 +680,7 @@ def _read_entity_dir(entity_dir: str, entity_name: str) -> dict[str, Any]:
     return data
 
 
-def _entity_to_osi_dataset(entity_data: dict[str, Any]) -> dict[str, Any]:
+def _entity_to_ossie_dataset(entity_data: dict[str, Any]) -> dict[str, Any]:
     entity_name = entity_data["name"]
     ds: dict[str, Any] = {"name": entity_name}
 
@@ -690,22 +694,22 @@ def _entity_to_osi_dataset(entity_data: dict[str, Any]) -> dict[str, Any]:
     if keys:
         ds["primary_key"] = list(keys)
 
-    # Restore OSI-only fields preserved in Honeydew metadata
-    osi_meta = entity_data.get("osi_meta") or {}
-    if osi_meta.get("ai_context"):
-        ds["ai_context"] = osi_meta["ai_context"]
+    # Restore Ossie-only fields preserved in Honeydew metadata
+    ossie_meta = entity_data.get("ossie_meta") or {}
+    if ossie_meta.get("ai_context"):
+        ds["ai_context"] = ossie_meta["ai_context"]
 
     # A Honeydew entity's keys uniquely identify its rows — Honeydew enforces this
     # and validates that relationships join to those keys — so surface them as a
     # unique key as well as the primary key. Union with any unique keys preserved
-    # from an OSI source, de-duplicated.
-    unique_keys = [list(uk) for uk in (osi_meta.get("unique_keys") or [])]
+    # from an Ossie source, de-duplicated.
+    unique_keys = [list(uk) for uk in (ossie_meta.get("unique_keys") or [])]
     if keys and tuple(keys) not in {tuple(uk) for uk in unique_keys}:
         unique_keys.append(list(keys))
     if unique_keys:
         ds["unique_keys"] = unique_keys
 
-    restored_ext = list(osi_meta.get("custom_extensions") or [])
+    restored_ext = list(ossie_meta.get("custom_extensions") or [])
     honeydew_extra = entity_data.get("honeydew_extra") or {}
     if honeydew_extra:
         restored_ext.append({"vendor_name": HONEYDEW_VENDOR, "data": json.dumps(honeydew_extra)})
@@ -729,28 +733,28 @@ def _entity_to_osi_dataset(entity_data: dict[str, Any]) -> dict[str, Any]:
                 "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": col}]},
             }
             datatype = attr.get("datatype") or "string"
-            dim = _honeydew_datatype_to_osi_dimension(datatype)
+            dim = _honeydew_datatype_to_ossie_dimension(datatype)
             if dim is not None:
                 field["dimension"] = dim
             if attr.get("description"):
                 field["description"] = str(attr["description"]).strip()
 
-            attr_osi_meta = _read_osi_metadata(attr)
+            attr_ossie_meta = _read_ossie_metadata(attr)
             attr_labels = attr.get("labels") or []
 
             # Restore ai_context (structured form takes priority)
             # Only synthesise synonyms from labels when they are native Honeydew labels
-            # (i.e. osi_meta has no 'label' key, meaning the label didn't come from OSI)
-            if attr_osi_meta.get("ai_context"):
-                field["ai_context"] = attr_osi_meta["ai_context"]
-            elif attr_labels and "label" not in attr_osi_meta:
+            # (i.e. ossie_meta has no 'label' key, meaning the label didn't come from Ossie)
+            if attr_ossie_meta.get("ai_context"):
+                field["ai_context"] = attr_ossie_meta["ai_context"]
+            elif attr_labels and "label" not in attr_ossie_meta:
                 field["ai_context"] = {"synonyms": list(attr_labels)}
 
-            # Restore label: prefer osi_meta (exact round-trip), else first Honeydew label
-            # Don't set label when labels came from ai_context.synonyms (osi_meta has ai_context)
-            if "label" in attr_osi_meta:
-                field["label"] = attr_osi_meta["label"]
-            elif attr_labels and not attr_osi_meta.get("ai_context"):
+            # Restore label: prefer ossie_meta (exact round-trip), else first Honeydew label
+            # Don't set label when labels came from ai_context.synonyms (ossie_meta has ai_context)
+            if "label" in attr_ossie_meta:
+                field["label"] = attr_ossie_meta["label"]
+            elif attr_labels and not attr_ossie_meta.get("ai_context"):
                 field["label"] = attr_labels[0]
 
             # Honeydew-specific metadata → HONEYDEW custom_extension
@@ -763,7 +767,7 @@ def _entity_to_osi_dataset(entity_data: dict[str, Any]) -> dict[str, Any]:
             if len(attr_labels) > 1:
                 attr_honeydew_extra["labels"] = attr_labels
 
-            all_ext = list(attr_osi_meta.get("custom_extensions") or [])
+            all_ext = list(attr_ossie_meta.get("custom_extensions") or [])
             if attr_honeydew_extra:
                 all_ext.append({"vendor_name": HONEYDEW_VENDOR, "data": json.dumps(attr_honeydew_extra)})
             if all_ext:
@@ -784,7 +788,7 @@ def _entity_to_osi_dataset(entity_data: dict[str, Any]) -> dict[str, Any]:
             "name": aname,
             "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": sql}]},
         }
-        dim = _honeydew_datatype_to_osi_dimension(datatype)
+        dim = _honeydew_datatype_to_ossie_dimension(datatype)
         if dim is not None:
             field["dimension"] = dim
         if calc.get("description"):
@@ -792,17 +796,17 @@ def _entity_to_osi_dataset(entity_data: dict[str, Any]) -> dict[str, Any]:
             if cleaned:
                 field["description"] = cleaned
 
-        calc_osi_meta = _read_osi_metadata(calc)
+        calc_ossie_meta = _read_ossie_metadata(calc)
         calc_labels = calc.get("labels") or []
 
-        if calc_osi_meta.get("ai_context"):
-            field["ai_context"] = calc_osi_meta["ai_context"]
-        elif calc_labels and "label" not in calc_osi_meta:
+        if calc_ossie_meta.get("ai_context"):
+            field["ai_context"] = calc_ossie_meta["ai_context"]
+        elif calc_labels and "label" not in calc_ossie_meta:
             field["ai_context"] = {"synonyms": list(calc_labels)}
 
-        if "label" in calc_osi_meta:
-            field["label"] = calc_osi_meta["label"]
-        elif calc_labels and not calc_osi_meta.get("ai_context"):
+        if "label" in calc_ossie_meta:
+            field["label"] = calc_ossie_meta["label"]
+        elif calc_labels and not calc_ossie_meta.get("ai_context"):
             field["label"] = calc_labels[0]
 
         calc_honeydew_extra = {
@@ -812,8 +816,8 @@ def _entity_to_osi_dataset(entity_data: dict[str, Any]) -> dict[str, Any]:
         if datatype == "bool":
             calc_honeydew_extra["datatype"] = datatype
 
-        all_calc_ext = list(calc_osi_meta.get("custom_extensions") or [])
-        # Always mark as calculated_attribute so OSI → Honeydew routes it correctly
+        all_calc_ext = list(calc_ossie_meta.get("custom_extensions") or [])
+        # Always mark as calculated_attribute so Ossie → Honeydew routes it correctly
         all_calc_ext.append({
             "vendor_name": HONEYDEW_VENDOR,
             "data": json.dumps(dict({"type": "calculated_attribute", "entity": entity_name}, **calc_honeydew_extra)),
@@ -828,16 +832,16 @@ def _entity_to_osi_dataset(entity_data: dict[str, Any]) -> dict[str, Any]:
     return ds
 
 
-def _honeydew_datatype_to_osi_dimension(datatype: str) -> dict[str, Any] | None:
+def _honeydew_datatype_to_ossie_dimension(datatype: str) -> dict[str, Any] | None:
     dt = (datatype or "").lower()
     if dt in ("date", "timestamp", "time"):
         return {"is_time": True}
     if dt in ("bool", "string"):
         return {"is_time": False}
-    return None  # number / float → OSI fact (no dimension key)
+    return None  # number / float → Ossie fact (no dimension key)
 
 
-def _honeydew_relation_to_osi(
+def _honeydew_relation_to_ossie(
     rel: dict[str, Any],
     entity_name: str,
     seen: set[tuple],
@@ -871,21 +875,21 @@ def _honeydew_relation_to_osi(
 
     rel_name = rel.get("name") or f"{from_entity}_to_{to_entity}"
 
-    osi_rel: dict[str, Any] = {"name": rel_name, "from": from_entity, "to": to_entity}
+    ossie_rel: dict[str, Any] = {"name": rel_name, "from": from_entity, "to": to_entity}
     if from_cols:
-        osi_rel["from_columns"] = from_cols
-        osi_rel["to_columns"] = to_cols
+        ossie_rel["from_columns"] = from_cols
+        ossie_rel["to_columns"] = to_cols
 
     if connection_expr and not connection:
         sql_expr = (connection_expr.get("sql") or "") if isinstance(connection_expr, dict) else str(connection_expr)
-        osi_rel["custom_extensions"] = [
+        ossie_rel["custom_extensions"] = [
             {"vendor_name": HONEYDEW_VENDOR, "data": json.dumps({"connection_expr": sql_expr})}
         ]
 
-    return osi_rel
+    return ossie_rel
 
 
-def _honeydew_metric_to_osi(metric: dict[str, Any], entity_name: str) -> dict[str, Any] | None:
+def _honeydew_metric_to_ossie(metric: dict[str, Any], entity_name: str) -> dict[str, Any] | None:
     mname = metric.get("name") or ""
     if not mname:
         return None
@@ -895,7 +899,7 @@ def _honeydew_metric_to_osi(metric: dict[str, Any], entity_name: str) -> dict[st
         warnings.warn(f"Metric '{mname}' in entity '{entity_name}' has no SQL, skipping")
         return None
 
-    osi_m: dict[str, Any] = {
+    ossie_m: dict[str, Any] = {
         "name": mname,
         "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": sql}]},
         "custom_extensions": [
@@ -906,25 +910,25 @@ def _honeydew_metric_to_osi(metric: dict[str, Any], entity_name: str) -> dict[st
     if metric.get("description"):
         cleaned = str(metric["description"]).strip()
         if cleaned:
-            osi_m["description"] = cleaned
+            ossie_m["description"] = cleaned
 
-    metric_osi_meta = _read_osi_metadata(metric)
-    if metric_osi_meta.get("ai_context"):
-        osi_m["ai_context"] = metric_osi_meta["ai_context"]
+    metric_ossie_meta = _read_ossie_metadata(metric)
+    if metric_ossie_meta.get("ai_context"):
+        ossie_m["ai_context"] = metric_ossie_meta["ai_context"]
 
-    restored_ext = metric_osi_meta.get("custom_extensions") or []
+    restored_ext = metric_ossie_meta.get("custom_extensions") or []
     if restored_ext:
-        osi_m["custom_extensions"] = osi_m["custom_extensions"] + list(restored_ext)
+        ossie_m["custom_extensions"] = ossie_m["custom_extensions"] + list(restored_ext)
 
-    return osi_m
+    return ossie_m
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# OSI metadata helpers — store/restore OSI fields in Honeydew metadata sections
+# Ossie metadata helpers — store/restore Ossie fields in Honeydew metadata sections
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _build_osi_metadata(
+def _build_ossie_metadata(
     *,
     ai_context: Any = None,
     label: str | None = None,
@@ -932,7 +936,7 @@ def _build_osi_metadata(
     custom_extensions: list | None = None,
     extra_vendors: list[str] | None = None,
 ) -> dict[str, Any] | None:
-    """Build a Honeydew metadata entry that stores OSI-only fields for round-tripping."""
+    """Build a Honeydew metadata entry that stores Ossie-only fields for round-tripping."""
     items: list[dict[str, Any]] = []
 
     if ai_context is not None:
@@ -949,13 +953,16 @@ def _build_osi_metadata(
 
     if not items:
         return None
-    return {"name": _OSI_METADATA_SECTION, "metadata": items}
+    return {"name": _OSSIE_METADATA_SECTION, "metadata": items}
 
 
-def _read_osi_metadata(obj: dict[str, Any]) -> dict[str, Any]:
-    """Read OSI-preserved fields from a Honeydew object's 'osi' metadata section."""
+def _read_ossie_metadata(obj: dict[str, Any]) -> dict[str, Any]:
+    """Read Ossie-preserved fields from a Honeydew object's 'ossie' metadata section."""
     for section in (obj.get("metadata") or []):
-        if (section.get("name") or "") != _OSI_METADATA_SECTION:
+        if (section.get("name") or "") not in (
+            _OSSIE_METADATA_SECTION,
+            _LEGACY_OSSIE_METADATA_SECTION,
+        ):
             continue
         result: dict[str, Any] = {}
         for item in (section.get("metadata") or []):
@@ -972,13 +979,13 @@ def _read_osi_metadata(obj: dict[str, Any]) -> dict[str, Any]:
                 try:
                     result[key] = json.loads(raw)
                 except (json.JSONDecodeError, TypeError):
-                    warnings.warn(f"Could not parse OSI metadata field '{key}': {raw!r}")
+                    warnings.warn(f"Could not parse Ossie metadata field '{key}': {raw!r}")
         return result
     return {}
 
 
 def _get_honeydew_extension(obj: dict[str, Any]) -> dict[str, Any]:
-    """Extract the HONEYDEW custom_extension data from an OSI object."""
+    """Extract the HONEYDEW custom_extension data from an Ossie object."""
     for ext in (obj.get("custom_extensions") or []):
         if ext.get("vendor_name") == HONEYDEW_VENDOR:
             try:
@@ -1018,25 +1025,25 @@ def _check_safe_path(output_abs: str, rel_path: str) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Bidirectional OSI ↔ Honeydew semantic model converter"
+        description="Bidirectional Ossie ↔ Honeydew semantic model converter"
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p1 = sub.add_parser("osi-to-honeydew", help="Convert OSI YAML → Honeydew workspace")
-    p1.add_argument("-i", "--input", required=True, help="OSI YAML input file")
+    p1 = sub.add_parser("ossie-to-honeydew", help="Convert Ossie YAML → Honeydew workspace")
+    p1.add_argument("-i", "--input", required=True, help="Ossie YAML input file")
     p1.add_argument("-o", "--output", required=True, help="Output directory for Honeydew workspace")
 
-    p2 = sub.add_parser("honeydew-to-osi", help="Convert Honeydew workspace → OSI YAML")
+    p2 = sub.add_parser("honeydew-to-ossie", help="Convert Honeydew workspace → Ossie YAML")
     p2.add_argument("-i", "--input", required=True, help="Honeydew workspace directory")
-    p2.add_argument("-o", "--output", required=True, help="OSI YAML output file")
+    p2.add_argument("-o", "--output", required=True, help="Ossie YAML output file")
 
     args = parser.parse_args()
 
-    if args.command == "osi-to-honeydew":
+    if args.command == "ossie-to-honeydew":
         with open(args.input) as f:
-            osi_yaml = f.read()
+            ossie_yaml = f.read()
         try:
-            files = convert_osi_to_honeydew(osi_yaml)
+            files = convert_ossie_to_honeydew(ossie_yaml)
         except HoneydewConversionError as e:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
@@ -1052,15 +1059,15 @@ def main() -> None:
                 f.write(content)
         print(f"Wrote {len(files)} file(s) to {args.output}")
 
-    elif args.command == "honeydew-to-osi":
+    elif args.command == "honeydew-to-ossie":
         try:
-            osi_yaml = convert_honeydew_to_osi(args.input)
+            ossie_yaml = convert_honeydew_to_ossie(args.input)
         except HoneydewConversionError as e:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
 
         with open(args.output, "w") as f:
-            f.write(osi_yaml)
+            f.write(ossie_yaml)
         print(f"Converted {args.input} → {args.output}")
 
 
