@@ -88,11 +88,17 @@ class OssieToSpecConverter:
 
 def _convert_ontology_concepts(ont: OntologyComponent) -> list[ConceptComponent]:
     components: list[ConceptComponent] = []
+    # Group once: `ont.relationships` rebuilds a list on every access, so scanning
+    # it per concept is O(concepts x relationships). Keyed on id() to keep the
+    # identity comparison a per-concept scan would do.
+    by_container: dict[int, list[Relationship]] = {}
+    for rel in ont.relationships:
+        by_container.setdefault(id(rel.container), []).append(rel)
+
     for concept in ont.concepts():
         if not concept.is_component:
             continue
-        rels = [rel for rel in ont.relationships if rel.container is concept]
-        components.append(_convert_concept(concept, rels))
+        components.append(_convert_concept(concept, by_container.get(id(concept), [])))
     return components
 
 

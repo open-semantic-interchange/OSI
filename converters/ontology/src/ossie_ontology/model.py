@@ -373,14 +373,19 @@ class Role:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Role):
             return False
+        # Position included: the two roles of a self-relationship differ in
+        # nothing else when neither carries a name, and conflating them makes
+        # `sibling` return the role itself and collapses both into one entry of
+        # any set or dict keyed by Role.
         return (
             self._part_of == other._part_of
             and self._player == other._player
             and self._name == other._name
+            and self._idx == other._idx
         )
 
     def __hash__(self) -> int:
-        return hash((self._part_of, self._player, self._name))
+        return hash((self._part_of, self._player, self._name, self._idx))
 
 
 # ---------------------------------------------------------------------------
@@ -952,10 +957,26 @@ class OntologyComponent:
         return list(self._requires)
 
     def lookup_concept(self, name: str | None) -> Concept | None:
+        """The concept called *name*, or None. Adds nothing.
+
+        Use `ensure_builtin_concept` where a builtin should be created on
+        demand: this one answers "is that name taken?", and callers rely on it
+        for exactly that.
+        """
         if not name:
             return None
-        if name in self._concept_name_map:
-            return self._concept_name_map[name]
+        return self._concept_name_map.get(name)
+
+    def ensure_builtin_concept(self, name: str | None) -> Concept | None:
+        """The concept called *name*, creating it if *name* is a builtin.
+
+        The mutating half of what `lookup_concept` used to do. Builtins are
+        declared nowhere, so a model that first mentions `String` in a role or a
+        field type gets it added here, on demand.
+        """
+        existing = self.lookup_concept(name)
+        if existing is not None:
+            return existing
         if name in BUILTIN_CONCEPTS:
             concept = Concept(name=name, builtin=True, is_component=False)
             self.add_concept(concept)

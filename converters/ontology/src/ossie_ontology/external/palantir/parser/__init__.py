@@ -92,7 +92,13 @@ class PalantirDataSetParser:
             cols: list[DataSetColumn] = []
             for item in get_list(d, "datasetSchema"):
                 if isinstance(item, dict):
-                    cols.append(DataSetColumn(item.get("name"), item.get("type"), ds))
+                    col_name = norm(item.get("name"))
+                    if not col_name:
+                        warnings.warn(
+                            f"Skipping column with missing name in datasetSchema for dataset '{ds_id}'"
+                        )
+                        continue
+                    cols.append(DataSetColumn(col_name, item.get("type"), ds))
             ds._columns = cols
 
         # Dependencies

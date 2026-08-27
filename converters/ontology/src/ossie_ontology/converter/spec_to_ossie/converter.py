@@ -119,7 +119,7 @@ class SpecToOssieConverter:
             extends: list[Concept] = []
             if concept_spec.extends:
                 for ext in concept_spec.extends:
-                    parent = ontology.lookup_concept(ext)
+                    parent = ontology.ensure_builtin_concept(ext)
                     if not parent:
                         raise ValueError(
                             f"Subtype '{ext}' is not declared in ontology '{spec.name}'."
@@ -195,7 +195,7 @@ class SpecToOssieConverter:
     ) -> None:
         relates: list[tuple[Concept, str | None]] = []
         for role_spec in rel_spec.roles:
-            role_concept = ontology.lookup_concept(role_spec.concept)
+            role_concept = ontology.ensure_builtin_concept(role_spec.concept)
             if role_concept is None:
                 raise ValueError(
                     f"Role concept '{role_spec.concept}' in relationship '{container.name}.{rel_spec.name}' "
@@ -292,7 +292,7 @@ class SpecToOssieConverter:
     ) -> ObjectMapping:
         concept: Concept | None = None
         if om_spec.concept:
-            concept = ontology.lookup_concept(om_spec.concept)
+            concept = ontology.ensure_builtin_concept(om_spec.concept)
             if concept is None:
                 raise ValueError(
                     f"ObjectMapping references unknown concept '{om_spec.concept}' in ontology "

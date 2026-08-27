@@ -163,6 +163,15 @@ def _topological_sort_break_cycles(nodes: list[T], edges: list[tuple[T, T]]) -> 
 def _topological_sort(nodes: list[T], edges: list[tuple[T, T]]) -> list[T] | None:
     order = []
 
+    # An edge to or from something outside `nodes` constrains no ordering among
+    # them, and leaving it in would stall Kahn's algorithm on a node whose
+    # in-degree nothing can decrement — reported as a cycle, which it is not.
+    # Dropped here as `_topological_sort_break_cycles` drops it, so returning
+    # None means a cycle and the caller keeps the right to say what a dangling
+    # endpoint of its own means.
+    node_set = set(nodes)
+    edges = [(src, tgt) for src, tgt in edges if src in node_set and tgt in node_set]
+
     # simple implementation of Kahn's Algorithm
 
     # index edges

@@ -36,8 +36,9 @@ from pathlib import Path
 
 import pytest
 
-from ossie_ontology.external.palantir.model import Ontology
+from ossie_ontology.external.palantir.model import DataType, Ontology
 from ossie_ontology.external.palantir.parser import PalantirOntologyParser, PalantirParser
+from ossie_ontology.model import BUILTIN_CONCEPTS
 
 # A minimal-but-complete Palantir export: one object type backed by one dataset.
 _ONTOLOGY_JSON = {
@@ -283,3 +284,60 @@ def test_subclass_can_add_a_datasource_rid_spelling(tmp_path: Path):
 
     model = _ExtendedParser().parse(export)
     assert _sole_data_source(model).backing_datasource_id() == "ri.datasource.1"
+
+
+# ----- dataset schema ---------------------------------------------------
+
+def _write_export_with_schema(base: Path, schema: list[dict]) -> Path:
+    """An extracted-folder export whose dataset declares the given *schema*."""
+    datasets = json.loads(json.dumps(_DATASET_JSON))
+    datasets[0]["datasetSchema"] = schema
+
+    (base / "data_sets").mkdir(parents=True)
+    (base / "ontology.json").write_text(json.dumps(_ONTOLOGY_JSON))
+    (base / "data_sets" / "ds.json").write_text(json.dumps(datasets))
+    return base
+
+
+def test_column_without_a_name_is_skipped(tmp_path: Path):
+    """A nameless column is reported here, where the dataset is known.
+
+    Kept out of the model rather than carried as `None`: the converter
+    normalizes column names, so a nameless one used to surface much later as an
+    AttributeError that named neither the dataset nor the file it came from.
+    """
+    export = _write_export_with_schema(
+        tmp_path / "export",
+        [
+            {"name": "widget_id", "type": "STRING"},
+            {"type": "STRING"},  # no name at all
+            {"name": "   ", "type": "STRING"},  # blank name
+        ],
+    )
+
+    with pytest.warns(UserWarning, match="Skipping column with missing name") as records:
+        model = PalantirParser().parse(export)
+
+    assert len(records) == 2
+    [dataset] = model.data_sets().values()
+    assert [column.name() for column in dataset.columns()] == ["widget_id"]
+    _assert_widget_model(model)
+
+
+# ----- data types -------------------------------------------------------
+
+def test_every_data_type_maps_to_a_builtin_concept():
+    """The converter looks this name up and raises when it is not a builtin, so
+    an unmapped member would fail every export that uses it."""
+    unmapped = {t.name: t.to_type() for t in DataType if t.to_type() not in BUILTIN_CONCEPTS}
+    assert unmapped == {}
+
+
+def test_only_integral_types_map_to_integer():
+    """Typing a blob or a reference as a number asserts arithmetic over it.
+
+    The mapping ends in a catch-all, so this is the check that a member added
+    to the enum does not quietly join the numeric branch.
+    """
+    numeric = {t.name for t in DataType if t.to_type() == "Integer"}
+    assert numeric == {"INTEGER", "LONG", "SHORT"}

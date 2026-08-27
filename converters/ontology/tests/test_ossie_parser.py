@@ -26,8 +26,18 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ossie_ontology.converter.ossie_to_spec.converter import OssieToSpecConverter
-from ossie_ontology.model import ConceptType, OssieOntology, RelationshipMultiplicity
+from ossie_ontology.converter.ossie_to_spec.converter import (
+    OssieToSpecConverter,
+    _convert_ontology_concepts,
+)
+from ossie_ontology.model import (
+    Concept,
+    ConceptType,
+    OntologyComponent,
+    OssieOntology,
+    Relationship,
+    RelationshipMultiplicity,
+)
 from ossie_ontology.parser import OssieParser
 
 
@@ -206,3 +216,86 @@ def test_dump_yaml_is_deterministic_for_fixed_input(flights_path):
     yaml_a = OssieToSpecConverter.convert(OssieParser().parse(flights_path)).dump_yaml()
     yaml_b = OssieToSpecConverter.convert(OssieParser().parse(flights_path)).dump_yaml()
     assert yaml_a == yaml_b
+
+
+# ----- concept dependency errors ----------------------------------------
+
+def _write_spec(tmp_path: Path, concepts: list[dict]) -> Path:
+    path = tmp_path / "spec.yaml"
+    path.write_text(yaml.safe_dump({"version": "0.1.0", "name": "Demo", "ontology": concepts}))
+    return path
+
+
+def _concept(name: str, *, extends: list[str] | None = None) -> dict:
+    concept: dict = {
+        "concept": name,
+        "type": "EntityType",
+        "relationships": [{"name": f"{name.lower()}_id", "roles": [{"concept": "String"}]}],
+        "identify_by": [f"{name.lower()}_id"],
+    }
+    if extends:
+        concept["extends"] = extends
+    return concept
+
+
+def test_extends_an_undeclared_concept_names_it(tmp_path: Path):
+    """The dependency sort runs before this check, so it must not claim a cycle.
+
+    An `extends` target missing from the document is a dangling edge, not a
+    loop, and the author needs to be told which name is missing.
+    """
+    path = _write_spec(tmp_path, [_concept("Gadget", extends=["Undeclared"])])
+
+    with pytest.raises(ValueError, match="Subtype 'Undeclared' is not declared"):
+        OssieParser().parse(path)
+
+
+def test_extends_in_a_cycle_is_still_reported_as_a_cycle(tmp_path: Path):
+    path = _write_spec(
+        tmp_path, [_concept("A", extends=["B"]), _concept("B", extends=["A"])]
+    )
+
+    with pytest.raises(ValueError, match="contains a cycle"):
+        OssieParser().parse(path)
+
+
+def test_extends_a_builtin_is_not_a_dependency(tmp_path: Path):
+    """Builtins are never declared in the document, and never sorted."""
+    path = _write_spec(tmp_path, [_concept("Code", extends=["String"])])
+
+    model = OssieParser().parse(path)
+
+    concept = model.ontology.lookup_concept("Code")
+    assert concept is not None
+    assert [p.name for p in concept.extends] == ["String"]
+
+
+# ----- grouping relationships under their concept -----------------------
+
+def test_relationships_are_grouped_under_their_own_container():
+    """Each concept emits exactly its own relationships, in declaration order.
+
+    The conversion groups the ontology's relationships by container in one pass,
+    so this pins the assignment: interleaved declarations, a concept that is not
+    a component (dropped, along with the relationship it contains), and the
+    order within each group.
+    """
+    ontology = OntologyComponent()
+    alpha = Concept(name="Alpha", type=ConceptType.ENTITY_TYPE)
+    beta = Concept(name="Beta", type=ConceptType.ENTITY_TYPE)
+    hidden = Concept(name="Hidden", type=ConceptType.ENTITY_TYPE, is_component=False)
+    for concept in (alpha, beta, hidden):
+        ontology.add_concept(concept)
+    for container, name in [
+        (alpha, "a1"), (beta, "b1"), (alpha, "a2"), (hidden, "h1"), (beta, "b2"),
+    ]:
+        ontology.add_relationship(
+            Relationship(name=name, container=container, relates=[(beta, None)])
+        )
+
+    components = _convert_ontology_concepts(ontology)
+
+    assert {c.concept: [r.name for r in c.relationships] for c in components} == {
+        "Alpha": ["a1", "a2"],
+        "Beta": ["b1", "b2"],
+    }

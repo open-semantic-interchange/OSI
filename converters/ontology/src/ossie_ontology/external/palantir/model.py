@@ -73,8 +73,14 @@ class DataType(Enum):
             return "DateTime"
         elif self == DataType.DATE:
             return "Date"
-        else:
+        elif self in (DataType.LONG, DataType.SHORT):
             return "Integer"
+        elif self == DataType.ANY:
+            return "Any"
+        else:
+            # ATTACHMENT, MEDIA_REFERENCE, CIPHER_TEXT, STRUCT, VECTOR: no scalar
+            # equivalent — carry them as opaque String rather than silently numeric.
+            return "String"
 
 
 class ArrayDataType:
@@ -471,7 +477,7 @@ class Relation(Resource):
 #
 #   - <definition.objectTypeRidManySide> for Subscription, and
 #   - <definition.oneToMany.objectTypeRidOneSide> for Account
-# 
+#
 # Such relations are implemented using one or more Properties of the ObjectType that
 # plays the many role. Each of these Properties is interpreted as a foreign-key
 # reference to a Property of the ObjectType that plays the one role. Because an ObjectType

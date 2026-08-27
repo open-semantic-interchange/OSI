@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import re
 import warnings
 
 from ossie_ontology.common.graph import topological_sort_break_cycles
@@ -39,6 +40,8 @@ from ossie_ontology.external.palantir.model import (
     Status,
 )
 from ossie_ontology.model import (
+    BUILTIN_CONCEPTS,
+    sanitize_identifier,
     Concept,
     ConceptMapping,
     ConceptType,
@@ -46,6 +49,7 @@ from ossie_ontology.model import (
     DatasetField,
     DialectExpression,
     DialectExpressionSet,
+    Formula,
     FormulaFactory,
     LinkMapping,
     SemanticModel,
@@ -60,6 +64,9 @@ from ossie_ontology.model import (
 
 
 _DEFAULT_DIALECT = "ANSI_SQL"
+
+# A column whose name is already an identifier needs no quoting in the emitted SQL.
+_BARE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class PalantirToOssieConverter:
@@ -155,8 +162,12 @@ class PalantirToOssieConverter:
         # get created; emitted into the OntologyMapping at the end so they appear in a stable order.
         concept_mappings: list[ConceptMapping] = []
 
-        self._convert_concepts(ontology, semantic_model, palantir_ontology, concept_mappings, db_name, schema_name)
-        self._convert_relationships(ontology, palantir_ontology, concept_mappings, semantic_model)
+        consumed_subtype_relation_ids = self._convert_concepts(
+            ontology, semantic_model, palantir_ontology, concept_mappings, db_name, schema_name
+        )
+        self._convert_relationships(
+            ontology, palantir_ontology, concept_mappings, semantic_model, consumed_subtype_relation_ids
+        )
 
         for cm in concept_mappings:
             ontology_mapping.add_concept_mapping(cm)
@@ -200,13 +211,18 @@ class PalantirToOssieConverter:
             if not allowed:
                 continue
 
-            if not rel.property_map():
+            property_map = rel.property_map()
+            if not property_map:
                 continue
 
+            # Every parent (many-side) primary key must be mapped: _convert_mappings
+            # resolves each of them through property_map, so a partially mapped
+            # composite key would raise a bare KeyError there. It is also the more
+            # accurate reading — identity carried over in part is an ordinary FK.
             is_subtype = all(
                 mprop in many_ot.primary_keys() and oprop in one_ot.primary_keys()
-                for mprop, oprop in rel.property_map().items()
-            )
+                for mprop, oprop in property_map.items()
+            ) and all(pk in property_map for pk in many_ot.primary_keys())
 
             if is_subtype:
                 result[one_ot] = rel
@@ -221,7 +237,16 @@ class PalantirToOssieConverter:
         concept_mappings: list[ConceptMapping],
         db_name: str,
         schema_name: str,
-    ) -> None:
+    ) -> set[str]:
+        """Convert the object types, returning the relations read as inheritance.
+
+        The returned guids are what `_convert_relationships` must leave alone:
+        they are already carried by an `extends` and would otherwise be emitted
+        a second time as ordinary references. This is narrower than
+        `_subtype_relations()` — a subtype edge dropped below to break a cycle,
+        or one whose concept was already converted, stays an ordinary relation —
+        so only this method can say which ones were actually consumed.
+        """
         subtype_relations = self._subtype_relations(palantir_ontology)
 
         nodes = [ot.guid() for ot in palantir_ontology.object_types().values()]
@@ -240,10 +265,11 @@ class PalantirToOssieConverter:
         # treat them as ignored inheritance below.
         ignore_subtype_relation_ids = {edge_to_relation_guid[e] for e in removed_edges}
 
+        consumed_subtype_relation_ids: set[str] = set()
         for ot_guid in order:
             ot = palantir_ontology.object_types()[ot_guid]
             if self._object_type_allowed(ot):
-                self._convert_object_type(
+                consumed = self._convert_object_type(
                     ontology,
                     semantic_model,
                     ot,
@@ -253,6 +279,10 @@ class PalantirToOssieConverter:
                     db_name,
                     schema_name,
                 )
+                if consumed is not None:
+                    consumed_subtype_relation_ids.add(consumed)
+
+        return consumed_subtype_relation_ids
 
     def _convert_object_type(
         self,
@@ -264,13 +294,24 @@ class PalantirToOssieConverter:
         concept_mappings: list[ConceptMapping],
         db_name: str,
         schema_name: str,
-    ) -> None:
+    ) -> str | None:
+        """Returns the guid of the relation converted to an `extends`, if any."""
         concept_name = PalantirToOssieConverter._concept_name(ot)
+        if concept_name in BUILTIN_CONCEPTS:
+            # Nothing good happens if it goes through: the entity takes the
+            # builtin's name, and every column of that builtin type is then typed
+            # by this object type. Reported like any other concept-name collision.
+            raise ValueError(
+                f"ObjectType '{ot.name()}' converts to the concept name '{concept_name}', which is "
+                f"a builtin value type. Rename the object type in the export, or exclude it: a "
+                f"builtin cannot also be an entity type."
+            )
         relevant_props = [
             p for p in ot.properties().values()
             if self._allowed(p, self.allowed_property_statuses())
         ]
         concept: Concept | None = None
+        consumed_subtype_relation_id: str | None = None
 
         if ontology.lookup_concept(concept_name) is None:
             is_subtype = ot in subtype_relations
@@ -283,8 +324,16 @@ class PalantirToOssieConverter:
                 parent_ot = subtype_relation.many_object_type()  # type: ignore[union-attr]
                 parent_name = PalantirToOssieConverter._concept_name(parent_ot)
                 parent = ontology.lookup_concept(parent_name)
-                assert parent is not None, f"Parent concept '{parent_name}' not found (expected from topological order)"
+                if parent is None:
+                    raise ValueError(
+                        f"ObjectType '{ot.name()}' is a subtype of '{parent_ot.name()}', but the "
+                        f"parent concept '{parent_name}' was not converted — the object-type status "
+                        f"policy excluded it while the subtype-relation policy admitted the relation. "
+                        f"Widen the allowed object-type statuses, or narrow the subtype-relation "
+                        f"statuses, so the two agree."
+                    )
                 concept = Concept(name=concept_name, type=ConceptType.ENTITY_TYPE, extends=[parent])
+                consumed_subtype_relation_id = subtype_relation.guid()  # type: ignore[union-attr]
             else:
                 concept = Concept(name=concept_name, type=ConceptType.ENTITY_TYPE)
             ontology.add_concept(concept)
@@ -334,6 +383,8 @@ class PalantirToOssieConverter:
             ontology, semantic_model, ot, subtype_relations, concept, concept_mappings, db_name, schema_name
         )
 
+        return consumed_subtype_relation_id
+
     def _convert_property(self, ontology: OntologyComponent, concept: Concept, prop: PalantirProperty) -> None:
         def madlib_decl(c: Concept, p: PalantirProperty) -> str:
             return (
@@ -381,12 +432,15 @@ class PalantirToOssieConverter:
                 PalantirToOssieConverter._concept_name(parent_ot)
             )
             property_map = subtype_relation.property_map()
-            identifier_props = list(parent_ot.primary_keys())
+            # primary_keys() is a set; sort by readable_id — as identify_by does
+            # above — so referent_mappings (and the resulting YAML) come out in
+            # the same order on every run.
+            identifier_props = sorted(parent_ot.primary_keys(), key=lambda p: p.readable_id())
 
             def resolve(p: PalantirProperty) -> PalantirProperty:
                 return property_map[p]
         else:
-            identifier_props = list(ot.primary_keys())
+            identifier_props = sorted(ot.primary_keys(), key=lambda p: p.readable_id())
 
             def resolve(p: PalantirProperty) -> PalantirProperty:
                 return p
@@ -488,8 +542,13 @@ class PalantirToOssieConverter:
         palantir_ontology: PalantirOntology,
         concept_mappings: list[ConceptMapping],
         semantic_model: SemanticModel,
+        consumed_subtype_relation_ids: set[str],
     ) -> None:
         for rel in palantir_ontology.relations().values():
+            # Already converted as an `extends` on the subtype concept; emitting
+            # it here as well would state the same fact twice.
+            if rel.guid() in consumed_subtype_relation_ids:
+                continue
             if self._allowed(rel, self.allowed_relation_statuses()):
                 self._convert_relation(ontology, rel, concept_mappings, semantic_model)
             elif (
@@ -523,6 +582,31 @@ class PalantirToOssieConverter:
         elif isinstance(relation, ManyToManyRelation):
             self._convert_many_to_many(ontology, relation)
 
+    def _add_relationship_if_name_free(
+        self, ontology: OntologyComponent, concept: Concept, relationship: Relationship
+    ) -> bool:
+        """Add *relationship* unless its name is already taken on *concept*.
+
+        `add_relationship` raises on a duplicate name, which would abort the
+        whole conversion over one relation. An export where a property and a link
+        share a name is ordinary — the FK column and the link it backs are often
+        named alike — so the link is dropped and the run continues.
+        `_convert_property` skips the same collision from the other side.
+
+        Renaming instead (suffixing, as `to_verbalization_string` does for
+        keywords) would keep the link, at the cost of emitted names that no
+        longer match the export.
+        """
+        if ontology.lookup_concept_relationship(concept, relationship.name) is not None:
+            warnings.warn(
+                f"Relation '{relationship.full_name}' collides with an existing relationship on "
+                f"the concept (a property and a link, or two links, sharing a name); "
+                f"skipping the link."
+            )
+            return False
+        ontology.add_relationship(relationship)
+        return True
+
     def _convert_many_to_one(
         self,
         ontology: OntologyComponent,
@@ -554,7 +638,8 @@ class PalantirToOssieConverter:
             verbalizes=[verbalize],
             multiplicity=RelationshipMultiplicity.MANY_TO_ONE,
         )
-        ontology.add_relationship(relationship)
+        if not self._add_relationship_if_name_free(ontology, mot_concept, relationship):
+            return
 
         if mot.has_syncs_from():
             self._attach_link_to_concept_mappings(
@@ -663,24 +748,39 @@ class PalantirToOssieConverter:
     ) -> ConceptMapping | None:
         """Resolve the ConceptMapping built for this (concept, dataset).
 
-        When multiple datasets feed the same concept we get one ConceptMapping
-        per dataset; pick the one whose referent expressions reference
-        `dataset`, falling back to the first candidate."""
-        candidates = [cm for cm in concept_mappings if cm.concept is concept]
-        if len(candidates) <= 1:
-            return candidates[0] if candidates else None
+        When several datasets feed the same concept there is one ConceptMapping
+        per dataset, and only the one identified by *this* dataset's columns will
+        do: the caller attaches expressions built from this dataset to whatever
+        comes back, so any other mapping would join two unrelated tables. There
+        is no useful second choice, and a concept whose mapping for this dataset
+        was dropped (nothing in it identified the concept) has none at all — so
+        None, and the caller reports the link it cannot attach.
+        """
         return next(
-            (cm for cm in candidates if PalantirToOssieConverter._references_dataset(cm, dataset)),
-            candidates[0],
+            (
+                cm
+                for cm in concept_mappings
+                if cm.concept is concept
+                and PalantirToOssieConverter._references_dataset(cm, dataset)
+            ),
+            None,
         )
 
     @staticmethod
     def _references_dataset(cm: ConceptMapping, dataset: Dataset) -> bool:
-        """True iff any referent expression in `cm` points to a field of `dataset`."""
+        """True iff an identifying expression in `cm` points to a field of `dataset`.
+
+        Covers both shapes an ObjectMapping identifies objects by — an
+        expression of its own, or referent mappings walking the identifying
+        relationships — since either can be the one naming the dataset.
+        """
+        def is_field_of(expression: DatasetField | Formula | None) -> bool:
+            return isinstance(expression, DatasetField) and expression.dataset is dataset
+
         return any(
-            isinstance(rm.expression, DatasetField) and rm.expression.dataset is dataset
+            is_field_of(om.expression)
+            or any(is_field_of(rm.expression) for rm in (om.referent_mappings or []))
             for om in cm.object_mappings
-            for rm in (om.referent_mappings or [])
         )
 
     def _convert_many_to_many(self, ontology: OntologyComponent, rel: ManyToManyRelation) -> None:
@@ -706,7 +806,7 @@ class PalantirToOssieConverter:
             verbalizes=[verbalize],
             multiplicity=None,
         )
-        ontology.add_relationship(relationship)
+        self._add_relationship_if_name_free(ontology, aot_concept, relationship)
 
     def _convert_intermediary_relation(
         self,
@@ -737,7 +837,8 @@ class PalantirToOssieConverter:
             relates=relates,
             verbalizes=[verbalize],
         )
-        ontology.add_relationship(relationship)
+        if not self._add_relationship_if_name_free(ontology, aot_concept, relationship):
+            return
 
         rel_a = palantir_ontology.relations()[rel.relation_a()]
         rel_a_name = PalantirToOssieConverter._attribute_name(rel_a)
@@ -793,7 +894,10 @@ class PalantirToOssieConverter:
                     name=field_name,
                     expression=DialectExpressionSet(
                         dialects=[
-                            DialectExpression(dialect=_DEFAULT_DIALECT, expression=field_name)
+                            DialectExpression(
+                                dialect=_DEFAULT_DIALECT,
+                                expression=PalantirToOssieConverter._column_expression(column.name()),
+                            )
                         ]
                     ),
                     type=PalantirToOssieConverter._resolve_field_type(ontology, palantir_ds, column),
@@ -813,10 +917,20 @@ class PalantirToOssieConverter:
     def _resolve_field_type(
         ontology: OntologyComponent, palantir_ds: PalantirDataSet, column: DataSetColumn
     ) -> Concept:
-        type_str = (
-            DataType.parse_datatype(column.type()).to_type() if column.type() else "String"
-        )
-        concept = ontology.lookup_concept(type_str)
+        try:
+            type_str = (
+                DataType.parse_datatype(column.type()).to_type() if column.type() else "String"
+            )
+        except ValueError:
+            # A type this export spells differently, or one Palantir has added:
+            # the same fallback a column with no type at all already takes.
+            warnings.warn(
+                f"Unrecognized column type '{column.type()}' on "
+                f"'{palantir_ds.readable_id()}.{column.name()}'; falling back to String."
+            )
+            type_str = "String"
+
+        concept = ontology.ensure_builtin_concept(type_str)
         if not concept:
             raise ValueError(
                 f"Concept '{type_str}' is not defined in the ontology but used in the "
@@ -850,13 +964,13 @@ class PalantirToOssieConverter:
         self, ontology: OntologyComponent, roles: list[tuple[Concept, str | None]], type_, arr_depth: int = 1
     ) -> list[tuple[Concept, str | None]]:
         if isinstance(type_, ArrayDataType):
-            integer = ontology.lookup_concept("Integer")
+            integer = ontology.ensure_builtin_concept("Integer")
             if integer is None:
                 raise ValueError("Builtin 'Integer' could not be resolved for array role.")
             roles.append((integer, PalantirToOssieConverter._depth_role_name(arr_depth)))
             self._convert_property_type_roles(ontology, roles, type_.base_type(), arr_depth + 1)
         else:
-            target = ontology.lookup_concept(type_.to_type())
+            target = ontology.ensure_builtin_concept(type_.to_type())
             if target is None:
                 raise ValueError(
                     f"Type concept '{type_.to_type()}' is not defined in the ontology."
@@ -917,7 +1031,28 @@ class PalantirToOssieConverter:
 
     @staticmethod
     def _normalize_field_name(name: str) -> str:
-        normalized = name.replace("-", "_")
+        """A dataset field name that is a usable identifier.
+
+        Everything a bare identifier cannot hold — spaces, dots, dashes, quotes —
+        becomes `_`, because a mapping expression naming this field is matched
+        against an identifier pattern when the spec is read back, and a field
+        name that fails it is silently taken for a formula instead of resolving
+        to the field.
+        """
+        normalized = sanitize_identifier(name)
         if normalized and normalized[0].isdigit():
             normalized = f"_{normalized}"
         return normalized
+
+    @staticmethod
+    def _column_expression(column_name: str) -> str:
+        """The SQL reading this physical column.
+
+        Separate from the field name above: that one is sanitized and so may no
+        longer spell the column, while this has to go on naming it exactly —
+        quoted when the name is not a bare identifier.
+        """
+        if _BARE_IDENTIFIER_RE.match(column_name):
+            return column_name
+        escaped = column_name.replace('"', '""')
+        return f'"{escaped}"'
