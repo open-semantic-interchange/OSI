@@ -32,6 +32,7 @@ class OssieDialect(str, Enum):
     TABLEAU = "TABLEAU"
     DATABRICKS = "DATABRICKS"
     BIGQUERY = "BIGQUERY"
+    THOUGHTSPOT = "THOUGHTSPOT"
 
 
 class OssieDataType(str, Enum):
