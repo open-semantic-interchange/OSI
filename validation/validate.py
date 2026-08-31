@@ -129,22 +129,40 @@ def validate_unique_names(data: dict) -> list[str]:
 
 
 def validate_references(data: dict) -> list[str]:
-    """Validate that relationships reference existing datasets."""
+    """Validate that relationships reference existing datasets and that
+    to_columns covers a declared key of the 'to' dataset."""
     errors = []
 
     for model in data.get("semantic_model", []):
         model_name = model.get("name", "<unnamed>")
-        dataset_names = {d.get("name") for d in model.get("datasets", []) if d.get("name")}
+        datasets = {d.get("name"): d for d in model.get("datasets", []) if d.get("name")}
 
         for rel in model.get("relationships", []):
             rel_name = rel.get("name", "<unnamed>")
             from_ds = rel.get("from")
             to_ds = rel.get("to")
 
-            if from_ds and from_ds not in dataset_names:
+            if from_ds and from_ds not in datasets:
                 errors.append(f"[Reference] Relationship '{rel_name}' in model '{model_name}' references unknown dataset '{from_ds}'")
-            if to_ds and to_ds not in dataset_names:
+            if to_ds and to_ds not in datasets:
                 errors.append(f"[Reference] Relationship '{rel_name}' in model '{model_name}' references unknown dataset '{to_ds}'")
+
+            # The spec defines to_columns as "Primary/unique key columns in the
+            # 'to' dataset". Coverage (superset of a key) still guarantees the
+            # many-to-one join, and declared keys may be incomplete since
+            # primary_key and unique_keys are optional — so accept any
+            # to_columns that covers a declared key, report a warning rather
+            # than an error, and skip datasets that declare no keys.
+            # Shape guards keep semantic checks from crashing on documents
+            # that already fail schema validation.
+            dataset = datasets.get(to_ds)
+            to_columns = rel.get("to_columns")
+            if dataset and isinstance(to_columns, list) and to_columns:
+                candidate_keys = [dataset.get("primary_key")] + list(dataset.get("unique_keys") or [])
+                declared_keys = [k for k in candidate_keys if isinstance(k, list) and k]
+                to_column_set = set(to_columns)
+                if declared_keys and not any(set(key) <= to_column_set for key in declared_keys):
+                    errors.append(f"[Reference] Warning: Relationship '{rel_name}' in model '{model_name}': to_columns {to_columns} does not cover the primary key or a unique key of dataset '{to_ds}'")
 
     return errors
 
@@ -227,7 +245,7 @@ def main():
     args = sys.argv[1:]
     yaml_path = Path(args[0])
 
-    schema_path = Path(__file__).parent.parent / "core-spec" / "osi-schema.json"
+    schema_path = Path(__file__).parent.parent / "core-spec" / "ossie-schema.json"
     if len(args) > 1:
         if len(args) == 3 and args[1] == "--schema":
             schema_path = Path(args[2])
