@@ -56,8 +56,11 @@ jobs:
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
 
-      - name: Run validator tests
+      - name: Run duplicate-key validator tests
         run: uv run validation/test_validate.py
+
+      - name: Run validation pytest tests
+        run: uv run --with pytest --with pyyaml --with jsonschema -m pytest validation/tests/
 
       - name: Validate canonical example
         run: uv run validation/validate.py examples/tpcds_semantic_model.yaml
