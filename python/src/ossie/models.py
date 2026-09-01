@@ -148,6 +148,24 @@ class OssieField(BaseModel):
         return self.datatype in _TEMPORAL_DATA_TYPES
 
 
+class OssieMetric(BaseModel):
+    """Quantitative measure defined on business data.
+
+    Used for both model-scoped metrics (OssieSemanticModel.metrics) and
+    dataset-scoped metrics (OssieDataset.metrics); the two placements share an
+    identical structure and differ only in their resolution rules.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    expression: OssieExpression
+    description: Optional[str] = None
+    datatype: Optional[OssieDataType] = None
+    ai_context: Optional[OssieAIContext] = None
+    custom_extensions: Optional[list[OssieCustomExtension]] = None
+
+
 class OssieDataset(BaseModel):
     """Logical dataset representing a business entity (fact or dimension table)."""
 
@@ -160,6 +178,7 @@ class OssieDataset(BaseModel):
     description: Optional[str] = None
     ai_context: Optional[OssieAIContext] = None
     fields: Optional[list[OssieField]] = None
+    metrics: Optional[list[OssieMetric]] = None
     custom_extensions: Optional[list[OssieCustomExtension]] = None
 
 
@@ -173,19 +192,6 @@ class OssieRelationship(BaseModel):
     to: str
     from_columns: list[str]
     to_columns: list[str]
-    ai_context: Optional[OssieAIContext] = None
-    custom_extensions: Optional[list[OssieCustomExtension]] = None
-
-
-class OssieMetric(BaseModel):
-    """Quantitative measure defined on business data."""
-
-    model_config = ConfigDict(frozen=True)
-
-    name: str
-    expression: OssieExpression
-    description: Optional[str] = None
-    datatype: Optional[OssieDataType] = None
     ai_context: Optional[OssieAIContext] = None
     custom_extensions: Optional[list[OssieCustomExtension]] = None
 

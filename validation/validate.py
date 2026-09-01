@@ -33,7 +33,9 @@ Validates Ossie YAML files against:
 1. JSON Schema (structure, types, enums)
 2. Unique names (datasets, fields, metrics, relationships)
 3. Valid relationship references
-4. SQL syntax (using sqlglot)
+4. Metric scoping (a dataset-scoped metric's expression references its dataset's
+   declared fields as dataset.field, and its source's columns unqualified)
+5. SQL syntax (using sqlglot)
 
 Usage:
     python validation/validate.py <yaml_file>
@@ -43,6 +45,7 @@ Usage:
 
 import json
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 try:
@@ -55,6 +58,7 @@ except ImportError:
 
 try:
     import sqlglot
+    from sqlglot import exp
     from sqlglot.errors import ParseError, TokenError
     SQLGLOT_AVAILABLE = True
 except ImportError:
@@ -121,6 +125,43 @@ def validate_unique_names(data: dict) -> list[str]:
         for dup in find_duplicates(metric_names):
             errors.append(f"[Unique] Duplicate metric name '{dup}' in model '{model_name}'")
 
+        # Check unique dataset-scoped metric names within each dataset, and that
+        # they do not shadow a field of the same dataset. A model-scoped metric
+        # reusing the name is reported separately, as a warning against the model.
+        model_metric_names = set(metric_names)
+        for dataset in model.get("datasets", []):
+            dataset_name = dataset.get("name", "<unnamed>")
+            ds_metric_names = [
+                m.get("name") for m in dataset.get("metrics", []) if m.get("name")
+            ]
+            ds_field_names = {
+                f.get("name") for f in dataset.get("fields", []) if f.get("name")
+            }
+            for dup in find_duplicates(ds_metric_names):
+                errors.append(
+                    f"[Unique] Duplicate metric name '{dup}' in dataset '{dataset_name}'"
+                )
+            for name in sorted(set(ds_metric_names) & ds_field_names):
+                errors.append(
+                    f"[Unique] Dataset-scoped metric '{dataset_name}.{name}' collides with "
+                    f"field '{dataset_name}.{name}'; '{dataset_name}.{name}' would be "
+                    f"ambiguous between a row-level field and an aggregate"
+                )
+            for name in sorted(set(ds_metric_names) & model_metric_names):
+                # Reported as a warning, and attributed to the model rather than
+                # the dataset. A dataset may be authored independently and reused
+                # across models, so it must not become invalid because of a name
+                # the surrounding model happens to introduce. References stay
+                # unambiguous either way: '<name>' is the model-scoped metric and
+                # '<dataset>.<name>' is the dataset-scoped one.
+                errors.append(
+                    f"[Unique] Warning: model-scoped metric '{name}' in model "
+                    f"'{model_name}' shadows dataset-scoped metric "
+                    f"'{dataset_name}.{name}'. Both remain addressable, but "
+                    f"consumers resolving the name '{name}' cannot tell which was "
+                    f"intended; consider renaming the model-scoped metric."
+                )
+
         # Check unique relationship names
         rel_names = [r.get("name") for r in model.get("relationships", []) if r.get("name")]
         for dup in find_duplicates(rel_names):
@@ -168,29 +209,158 @@ def validate_references(data: dict) -> list[str]:
     return errors
 
 
-def validate_sql_expression(expr: str, dialect: str, context: str) -> str | None:
-    """Validate a single SQL expression. Returns error message or None if valid."""
-    if not SQLGLOT_AVAILABLE:
-        return None
+@lru_cache(maxsize=2048)
+def _parse_expression(expr: str, dialect: str):
+    """Parse an expression, trying it bare and then wrapped in SELECT.
 
-    if dialect in SKIP_SQL_VALIDATION:
-        return None
+    Returns ``(tree, error)``. Exactly one of the two is meaningful:
+
+    * ``(tree, None)``  - parsed successfully.
+    * ``(None, message)`` - sqlglot rejected the expression in both forms.
+    * ``(None, None)``  - parsing was skipped, either because sqlglot is not
+      installed or because the dialect is one sqlglot cannot parse. Callers
+      must treat this as "unknown" rather than as a failure.
+
+    Results are cached because several checks run over the same expressions.
+    The returned tree is shared between callers and MUST NOT be mutated.
+    """
+    if not SQLGLOT_AVAILABLE or dialect in SKIP_SQL_VALIDATION:
+        return None, None
 
     sqlglot_dialect = DIALECT_MAP.get(dialect)
+    error = None
 
-    try:
-        # Try parsing as expression first (for field expressions like "column_name")
-        sqlglot.parse_one(expr, dialect=sqlglot_dialect)
-        return None
-    except (ParseError, TokenError):
-        pass
+    for candidate in (expr, f"SELECT {expr}"):
+        try:
+            tree = sqlglot.parse_one(candidate, dialect=sqlglot_dialect)
+        except (ParseError, TokenError) as exc:
+            if error is None:
+                error = str(exc).split(chr(10))[0]
+            continue
+        if tree is not None:
+            return tree, None
 
-    try:
-        # Try wrapping in SELECT for simple column references
-        sqlglot.parse_one(f"SELECT {expr}", dialect=sqlglot_dialect)
-        return None
-    except (ParseError, TokenError) as e:
-        return f"[SQL] {context}: {str(e).split(chr(10))[0]}"
+    return None, error
+
+
+def _qualified_references(tree) -> set[tuple[str, str]]:
+    """Every qualified column path in an expression, as (qualifier, name).
+
+    ``orders.amount`` yields ``{("orders", "amount")}``. For a three-part path
+    such as ``payload.attrs.value``, sqlglot puts the middle part in
+    ``Column.table`` and the first in ``Column.db``, so reading ``table`` alone
+    would report ``attrs``. Taking ``parts[0]`` and ``parts[1]`` gives the
+    outermost qualifier and the name it qualifies in every case. Unqualified
+    columns contribute nothing.
+    """
+    refs = set()
+    for col in tree.find_all(exp.Column):
+        parts = [part.name for part in col.parts]
+        if len(parts) > 1 and parts[0] and parts[1]:
+            refs.add((parts[0], parts[1]))
+    return refs
+
+
+def validate_metric_scoping(data: dict) -> list[str]:
+    """Validate the expression rules for dataset-scoped metrics.
+
+    A dataset-scoped metric's expression may reference the declared fields of
+    its dataset, written dataset_name.field_name, and the columns of its
+    source, written unqualified. Two things are errors: a qualifier naming
+    another dataset, since such a metric belongs in semantic_model.metrics, and
+    a qualifier naming the declaring dataset followed by a name that is not one
+    of its declared fields.
+
+    Whether a bare name is a real column of the source is not checked, because
+    that needs catalog metadata the model does not carry. A qualified reference
+    is checked, because the field list is in the model.
+
+    This checks the expression only. It says nothing about how the metric may be
+    queried: a dataset-scoped metric is joined and grouped like any other, using
+    the model's relationships.
+
+    A qualifier that names neither the declaring dataset nor another dataset is
+    left alone: it is a local alias, CTE, or subquery source.
+    """
+    errors = []
+
+    for model in data.get("semantic_model", []):
+        model_name = model.get("name", "<unnamed>")
+
+        datasets = model.get("datasets", [])
+        all_dataset_names = {
+            d["name"].casefold() for d in datasets if d.get("name")
+        }
+
+        for dataset in datasets:
+            dataset_name = dataset.get("name", "<unnamed>")
+            own_name = dataset_name.casefold()
+            other_dataset_names = all_dataset_names - {own_name}
+            own_field_names = {
+                f["name"].casefold()
+                for f in dataset.get("fields", [])
+                if f.get("name")
+            }
+
+            for metric in dataset.get("metrics", []):
+                metric_name = metric.get("name", "<unnamed>")
+                expression = metric.get("expression") or {}
+
+                for dialect_expr in expression.get("dialects", []):
+                    dialect = dialect_expr.get("dialect", "ANSI_SQL")
+                    expr = dialect_expr.get("expression", "")
+                    if not expr:
+                        continue
+
+                    tree, _ = _parse_expression(expr, dialect)
+                    if tree is None:
+                        continue
+
+                    foreign = set()
+                    undeclared = set()
+
+                    for qualifier, referenced in _qualified_references(tree):
+                        folded = qualifier.casefold()
+                        if folded == own_name:
+                            # Qualifying with the declaring dataset's own name
+                            # is a reference to one of its declared fields.
+                            if referenced.casefold() not in own_field_names:
+                                undeclared.add(f"{qualifier}.{referenced}")
+                        elif folded in other_dataset_names:
+                            foreign.add(qualifier)
+                        # Anything else is a struct or variant path, or a local
+                        # alias, so it is not a dataset reference and needs no
+                        # report.
+
+                    if foreign:
+                        errors.append(
+                            f"[Scope] Dataset-scoped metric '{dataset_name}.{metric_name}' "
+                            f"in model '{model_name}' ({dialect}) references "
+                            f"dataset(s) {', '.join(repr(f) for f in sorted(foreign))}. "
+                            f"Dataset-scoped metrics aggregate one dataset; a "
+                            f"metric spanning datasets is model-scoped and "
+                            f"belongs in semantic_model.metrics."
+                        )
+
+                    if undeclared:
+                        errors.append(
+                            f"[Scope] Dataset-scoped metric '{dataset_name}.{metric_name}' "
+                            f"in model '{model_name}' ({dialect}) references "
+                            f"{', '.join(repr(u) for u in sorted(undeclared))}. "
+                            f"A qualified reference MUST name a declared field "
+                            f"of dataset '{dataset_name}'; reference a column of "
+                            f"its source by unqualified name instead."
+                        )
+
+    return errors
+
+
+def validate_sql_expression(expr: str, dialect: str, context: str) -> str | None:
+    """Validate a single SQL expression. Returns error message or None if valid."""
+    _, error = _parse_expression(expr, dialect)
+    if error:
+        return f"[SQL] {context}: {error}"
+    return None
 
 
 def validate_sql(data: dict) -> list[str]:
@@ -212,7 +382,7 @@ def validate_sql(data: dict) -> list[str]:
             dataset_name = dataset.get("name", "<unnamed>")
             for field in dataset.get("fields", []):
                 field_name = field.get("name", "<unnamed>")
-                expression = field.get("expression", {})
+                expression = field.get("expression") or {}
                 for dialect_expr in expression.get("dialects", []):
                     dialect = dialect_expr.get("dialect", "ANSI_SQL")
                     expr = dialect_expr.get("expression", "")
@@ -222,10 +392,23 @@ def validate_sql(data: dict) -> list[str]:
                         if error:
                             errors.append(error)
 
+            # Validate dataset-scoped metric expressions
+            for metric in dataset.get("metrics", []):
+                metric_name = metric.get("name", "<unnamed>")
+                expression = metric.get("expression") or {}
+                for dialect_expr in expression.get("dialects", []):
+                    dialect = dialect_expr.get("dialect", "ANSI_SQL")
+                    expr = dialect_expr.get("expression", "")
+                    if expr:
+                        context = f"Metric '{dataset_name}.{metric_name}' in model '{model_name}' ({dialect})"
+                        error = validate_sql_expression(expr, dialect, context)
+                        if error:
+                            errors.append(error)
+
         # Validate metric expressions
         for metric in model.get("metrics", []):
             metric_name = metric.get("name", "<unnamed>")
-            expression = metric.get("expression", {})
+            expression = metric.get("expression") or {}
             for dialect_expr in expression.get("dialects", []):
                 dialect = dialect_expr.get("dialect", "ANSI_SQL")
                 expr = dialect_expr.get("expression", "")
@@ -281,6 +464,7 @@ def main():
     if data.get("semantic_model"):
         errors.extend(validate_unique_names(data))
         errors.extend(validate_references(data))
+        errors.extend(validate_metric_scoping(data))
         errors.extend(validate_sql(data))
 
     # Report results

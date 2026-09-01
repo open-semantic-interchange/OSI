@@ -135,3 +135,46 @@ def test_effective_time_dimension_role(
     )
 
     assert field.is_time_dimension() is expected
+
+
+def test_every_schema_property_exists_on_its_model() -> None:
+    """Guard against structural drift between the JSON Schema and these models.
+
+    Pydantic's default ``extra='ignore'`` means a property present in the schema
+    but absent from the corresponding model is silently discarded on load, with
+    no validation error. That is how ``OssieDataset.metrics`` came to drop
+    dataset-scoped metrics. Comparing the enum lists alone does not catch it, so
+    walk every ``$defs`` entry that declares ``properties`` and assert each one
+    is representable.
+    """
+    import ossie.models as models
+
+    schema_path = Path(__file__).parents[2] / "core-spec" / "ossie-schema.json"
+    schema = json.loads(schema_path.read_text())
+
+    checked = 0
+    for def_name, definition in schema["$defs"].items():
+        properties = definition.get("properties")
+        if not properties:
+            continue
+
+        model_name = f"Ossie{def_name}"
+        model = getattr(models, model_name, None)
+        assert model is not None, (
+            f"schema defines $defs.{def_name} with properties but there is no "
+            f"{model_name} model to represent it"
+        )
+
+        # Compare against aliases too: `from` is a Python keyword, so
+        # OssieRelationship exposes it under an alias.
+        representable = {
+            field.alias or name for name, field in model.model_fields.items()
+        }
+        missing = sorted(set(properties) - representable)
+        assert not missing, (
+            f"{model_name} cannot represent {missing} from $defs.{def_name}; "
+            f"these would be silently dropped on load"
+        )
+        checked += 1
+
+    assert checked >= 9, f"expected to check at least 9 models, checked {checked}"
