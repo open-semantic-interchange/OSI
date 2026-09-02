@@ -59,6 +59,7 @@ Supported SQL and expression language dialects for metrics and field definitions
 | `MAQL` | GoodData MAQL (Metric Analysis and Query Language) |
 | `BIGQUERY` | Google BigQuery (GoogleSQL) |
 | `SIGMA` | Sigma Computing's spreadsheet-style formula language |
+| `THOUGHTSPOT` | ThoughtSpot formula language |
 
 ### Data types
 
