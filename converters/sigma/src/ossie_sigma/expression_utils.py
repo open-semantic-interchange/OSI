@@ -15,13 +15,13 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Shared helpers for building/reading Ossie ``OSIExpression`` values from Sigma formulas."""
+"""Shared helpers for building/reading Ossie ``OssieExpression`` values from Sigma formulas."""
 
 from __future__ import annotations
 
 from typing import Optional
 
-from ossie import OSIDialect, OSIDialectExpression, OSIExpression
+from ossie import OssieDialect, OssieDialectExpression, OssieExpression
 
 from ossie_sigma.sigma_formula import (
     BinOp,
@@ -54,36 +54,36 @@ def qualify(node: FormulaNode, table_name: str) -> FormulaNode:
     return node
 
 
-def build_expression(formula: str, dataset_alias: Optional[str] = None) -> OSIExpression:
-    """Build an :class:`OSIExpression` from a raw Sigma formula.
+def build_expression(formula: str, dataset_alias: Optional[str] = None) -> OssieExpression:
+    """Build an :class:`OssieExpression` from a raw Sigma formula.
 
     Always includes a ``SIGMA``-dialect entry carrying the original formula text
     verbatim (guaranteeing lossless round-tripping), plus an ``ANSI_SQL`` entry when
     the formula translates cleanly.
     """
-    dialects = [OSIDialectExpression(dialect=OSIDialect.SIGMA, expression=formula)]
+    dialects = [OssieDialectExpression(dialect=OssieDialect.SIGMA, expression=formula)]
     try:
         node = parse_formula(formula)
         sql = to_ansi_sql(node, dataset_alias=dataset_alias)
     except FormulaParseError:
         sql = None
     if sql is not None:
-        dialects.append(OSIDialectExpression(dialect=OSIDialect.ANSI_SQL, expression=sql))
-    return OSIExpression(dialects=dialects)
+        dialects.append(OssieDialectExpression(dialect=OssieDialect.ANSI_SQL, expression=sql))
+    return OssieExpression(dialects=dialects)
 
 
-def sigma_dialect_text(expression: OSIExpression) -> Optional[str]:
+def sigma_dialect_text(expression: OssieExpression) -> Optional[str]:
     """Return the raw Sigma formula text from *expression*, if a ``SIGMA`` dialect entry exists."""
     for dialect_expr in expression.dialects:
-        if dialect_expr.dialect == OSIDialect.SIGMA:
+        if dialect_expr.dialect == OssieDialect.SIGMA:
             return dialect_expr.expression
     return None
 
 
-def ansi_sql_text(expression: OSIExpression) -> Optional[str]:
+def ansi_sql_text(expression: OssieExpression) -> Optional[str]:
     """Return the ``ANSI_SQL`` dialect entry from *expression*, if present."""
     for dialect_expr in expression.dialects:
-        if dialect_expr.dialect == OSIDialect.ANSI_SQL:
+        if dialect_expr.dialect == OssieDialect.ANSI_SQL:
             return dialect_expr.expression
     return None
 

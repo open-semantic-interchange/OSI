@@ -15,7 +15,25 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from ossie_sigma.ossie_to_sigma import OssieToSigmaConverter
-from ossie_sigma.sigma_to_ossie import SigmaToOssieConverter
+"""Sigma data-model-spec keys shared by both conversion directions.
 
-__all__ = ["SigmaToOssieConverter", "OssieToSigmaConverter"]
+Kept in one place so the set of model-level keys captured into
+``custom_extensions`` on Sigma -> Ossie always matches the set written back on
+Ossie -> Sigma; letting the two directions each keep their own copy risks the
+two lists silently drifting apart.
+"""
+
+MODEL_LEVEL_SPEC_KEYS = (
+    "dataModelId",
+    "folderId",
+    "documentVersion",
+    "latestDocumentVersion",
+    "schemaVersion",
+    "kind",
+    "createdAt",
+    "createdBy",
+    "updatedAt",
+    "updatedBy",
+    "ownerId",
+    "url",
+)

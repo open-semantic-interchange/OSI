@@ -45,11 +45,11 @@ element with another `kind` is preserved verbatim at the model level under
 `non_table_elements` with an `UNSUPPORTED_ELEMENT_KIND` issue. This is a defensive
 path, not an expected one.
 
-## Non-warehouse-table sources have no `OSIDataset.source`
+## Non-warehouse-table sources have no `OssieDataset.source`
 
 `source.kind` may be `warehouse-table`, `sql`, `table`, `data-model`, `join`, or
 `union`. Only the first is a `database.schema.table` location, which is what
-`OSIDataset.source` is defined to hold. The other five get a readable marker
+`OssieDataset.source` is defined to hold. The other five get a readable marker
 (`sql:<connectionId>`, `join:<elementId>`, ...) plus a `DERIVED_ELEMENT_NOT_MODELED`
 issue; the full native `source` block lives in `custom_extensions`, so export
 reproduces it exactly. An Ossie document that never came from Sigma can only ever
@@ -67,6 +67,21 @@ Unsolved: a document authored by another tool has no raw keys to fall back on, s
 export must synthesize key ids from field names. That works when every joined field is
 a modeled column, but cannot recreate a key pointing at a physical column the element
 never redefined.
+
+A raw physical reference resolves case-insensitively against the element's own plain
+columns (including ones self-qualified with the element's own physical table name,
+e.g. `[EVENTS/ORG_ID]` on the `EVENTS` element), but not against a column qualified
+with a genuinely different table name — that is a cross-table reference, not a
+physical column of this element. Two columns whose names differ only by case (e.g.
+`[amount]` and `[Amount]`) make the reference ambiguous; it is treated as unresolved
+rather than silently guessing.
+
+## Every Sigma object needs an id
+
+A table element, column, metric, or relationship missing an `id` is dropped from the
+conversion with a `MISSING_ID` issue rather than given a synthetic one: the Sigma Data
+Model API requires every one of these to have an id anyway, and other parts of the
+same spec may reference an id this converter never sees the referencing side of.
 
 ## Formula coverage is bounded by what Sigma puts in the formula
 
@@ -96,7 +111,7 @@ translatable `ANSI_SQL` one is available, the column or metric is **omitted** wi
 
 ## Cross-dataset metrics have no Sigma equivalent
 
-A Sigma metric is scoped to exactly one element; an `OSIMetric` is model-level and may
+A Sigma metric is scoped to exactly one element; an `OssieMetric` is model-level and may
 span datasets via relationships. Sigma → Ossie always promotes cleanly (the owning
 `element_id` is preserved). Ossie → Sigma places a metric by its preserved
 `element_id`, or, failing that, by the single dataset its ANSI SQL unambiguously
@@ -125,6 +140,7 @@ Sigma's backend.
 
 ## One semantic model per document
 
-Sigma data models are single models; `OSIDocument.semantic_model` is a list. Only
+Sigma data models are single models; `OssieDocument.semantic_model` is a list. Only
 `semantic_model[0]` is converted, with `EXTRA_MODEL_DROPPED` naming how many were
-dropped.
+dropped. An empty `semantic_model` list has no model to convert at all; rather than
+raising an opaque `IndexError`, `OssieToSigmaConverter` raises a `ConverterError`.

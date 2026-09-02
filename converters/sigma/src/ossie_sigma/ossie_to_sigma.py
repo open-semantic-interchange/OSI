@@ -15,19 +15,32 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Apache Ossie (OSIDocument) -> Sigma data model spec (JSON)."""
+"""Apache Ossie (OssieDocument) -> Sigma data model spec (JSON)."""
 
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any, Optional, Union
 from uuid import NAMESPACE_URL, uuid5
 
-from ossie import OSICustomExtension, OSIDataset, OSIDocument, OSIField, OSIMetric, OSIRelationship, OSIVendor
+from ossie import (
+    OssieCustomExtension,
+    OssieDataset,
+    OssieDocument,
+    OssieField,
+    OssieMetric,
+    OssieRelationship,
+    OssieSemanticModel,
+    OssieVendor,
+)
 
-from ossie_sigma.converter_issues import ConverterIssue, ConverterIssueType, ConverterResult
+from ossie_sigma.converter_issues import ConverterError, ConverterIssue, ConverterIssueType, ConverterResult
 from ossie_sigma.expression_utils import ansi_sql_text, infer_single_dataset_qualifier, sigma_dialect_text
 from ossie_sigma.sigma_formula import sql_to_sigma_formula
+from ossie_sigma.spec_keys import MODEL_LEVEL_SPEC_KEYS
+
+# Objects a `SIGMA` custom_extensions vendor entry can be attached to.
+_SigmaExtensionHost = Union[OssieDataset, OssieField, OssieMetric, OssieRelationship, OssieSemanticModel]
 
 _ID_NAMESPACE = uuid5(NAMESPACE_URL, "ossie.apache.org/converters/sigma")
 
@@ -62,13 +75,18 @@ def _stable_id(*parts: str) -> str:
     return str(uuid5(_ID_NAMESPACE, "/".join(parts))).replace("-", "")
 
 
-def _sigma_ext(item: Any) -> Optional[dict[str, Any]]:
+def _sigma_ext(item: _SigmaExtensionHost) -> Optional[dict[str, Any]]:
     for ext in item.custom_extensions or []:
-        if ext.vendor_name == OSIVendor.SIGMA.value:
+        if ext.vendor_name == OssieVendor.SIGMA.value:
             try:
-                return json.loads(ext.data)
+                data = json.loads(ext.data)
             except json.JSONDecodeError:
                 return None
+            # A hand-edited or foreign-tool-produced document could carry a SIGMA
+            # custom_extension whose `data` is valid JSON but not an object (e.g. a
+            # list or a bare string); treat that the same as no extension at all
+            # rather than returning something callers' `.get(...)` calls don't expect.
+            return data if isinstance(data, dict) else None
     return None
 
 
@@ -119,11 +137,17 @@ def _resolve_formula(
     return None
 
 
-class OSIToSigmaConverter:
-    """Converts an :class:`OSIDocument` into a Sigma data model spec (as plain JSON)."""
+class OssieToSigmaConverter:
+    """Converts an :class:`OssieDocument` into a Sigma data model spec (as plain JSON)."""
 
-    def convert(self, document: OSIDocument) -> ConverterResult[dict[str, Any]]:
+    def convert(self, document: OssieDocument) -> ConverterResult[dict[str, Any]]:
         issues: list[ConverterIssue] = []
+
+        if not document.semantic_model:
+            raise ConverterError(
+                "OssieDocument.semantic_model is empty; there is no semantic model to convert "
+                "into a Sigma data model spec."
+            )
 
         if len(document.semantic_model) > 1:
             issues.append(
@@ -140,7 +164,11 @@ class OSIToSigmaConverter:
         spec: dict[str, Any] = {"kind": "data-model", "name": model.name}
         if model.description:
             spec["description"] = model.description
-        for key in ("dataModelId", "folderId", "documentVersion", "latestDocumentVersion", "schemaVersion"):
+        # Restores every model-level spec key captured into custom_extensions on the
+        # way in (see sigma_to_ossie._MODEL_LEVEL_SPEC_KEYS, the same tuple), not just
+        # the identity/versioning keys, so createdAt/createdBy/updatedAt/updatedBy/
+        # ownerId/url round-trip losslessly instead of being silently dropped.
+        for key in MODEL_LEVEL_SPEC_KEYS:
             if key in model_ext:
                 spec[key] = model_ext[key]
         # `schemaVersion` is required on create/update, so a document that never came
@@ -162,7 +190,7 @@ class OSIToSigmaConverter:
             ext = _sigma_ext(dataset) or {}
             dataset_element_id[dataset.name] = ext.get("id") or _stable_id("element", dataset.name)
 
-        metrics_by_element: dict[str, list[OSIMetric]] = {}
+        metrics_by_element: dict[str, list[OssieMetric]] = {}
         for metric in model.metrics or []:
             ext = _sigma_ext(metric) or {}
             element_id = ext.get("element_id")
@@ -184,7 +212,7 @@ class OSIToSigmaConverter:
                     continue
             metrics_by_element.setdefault(element_id, []).append(metric)
 
-        relationships_by_element: dict[str, list[OSIRelationship]] = {}
+        relationships_by_element: dict[str, list[OssieRelationship]] = {}
         for rel in model.relationships or []:
             ext = _sigma_ext(rel) or {}
             element_id = ext.get("element_id") or dataset_element_id.get(rel.from_dataset, "")
@@ -208,10 +236,10 @@ class OSIToSigmaConverter:
 
     def _build_element(
         self,
-        dataset: OSIDataset,
+        dataset: OssieDataset,
         dataset_element_id: dict[str, str],
-        metrics_by_element: dict[str, list[OSIMetric]],
-        relationships_by_element: dict[str, list[OSIRelationship]],
+        metrics_by_element: dict[str, list[OssieMetric]],
+        relationships_by_element: dict[str, list[OssieRelationship]],
         issues: list[ConverterIssue],
     ) -> dict[str, Any]:
         ext = _sigma_ext(dataset) or {}
@@ -248,7 +276,13 @@ class OSIToSigmaConverter:
         }
         if dataset.description:
             element["description"] = dataset.description
-        if dataset.primary_key:
+        if "unique_keys_raw" in ext:
+            # Preserved verbatim from the Sigma -> Ossie direction: it may contain
+            # entries that never resolved to a modeled field (kept only in Ossie's
+            # custom_extensions, not in primary_key) or raw warehouse column
+            # references, neither of which `field_ids` can reconstruct.
+            element["uniqueKeys"] = ext["unique_keys_raw"]
+        elif dataset.primary_key:
             unique_keys = [field_ids[name] for name in dataset.primary_key if name in field_ids]
             if unique_keys:
                 element["uniqueKeys"] = unique_keys
@@ -262,15 +296,15 @@ class OSIToSigmaConverter:
         relationships = relationships_by_element.get(element_id, [])
         if relationships:
             element["relationships"] = [
-                self._build_relationship(r, dataset_element_id, field_ids) for r in relationships
+                self._build_relationship(r, dataset.name, dataset_element_id, field_ids) for r in relationships
             ]
 
         return element
 
     def _build_column(
         self,
-        dataset: OSIDataset,
-        field: OSIField,
+        dataset: OssieDataset,
+        field: OssieField,
         col_id: str,
         field_ext: dict[str, Any],
         issues: list[ConverterIssue],
@@ -305,7 +339,7 @@ class OSIToSigmaConverter:
         return column
 
     def _build_metric(
-        self, metric: OSIMetric, dataset_name: str, issues: list[ConverterIssue]
+        self, metric: OssieMetric, dataset_name: str, issues: list[ConverterIssue]
     ) -> Optional[dict[str, Any]]:
         ext = _sigma_ext(metric) or {}
         formula = _resolve_formula(metric.expression, dataset_name, f"{dataset_name}.{metric.name}", issues)
@@ -325,14 +359,18 @@ class OSIToSigmaConverter:
 
     def _build_relationship(
         self,
-        rel: OSIRelationship,
+        rel: OssieRelationship,
+        dataset_name: str,
         dataset_element_id: dict[str, str],
         field_ids: dict[str, str],
     ) -> dict[str, Any]:
         ext = _sigma_ext(rel) or {}
         target_element_id = dataset_element_id.get(rel.to, rel.to)
         result: dict[str, Any] = {
-            "id": ext.get("id") or _stable_id("relationship", rel.name),
+            # Scoped by owning dataset, like column ids (dataset+field) and metric ids
+            # (dataset+metric): unscoped by dataset, two unrelated relationships with
+            # the same name on different table pairs would hash to the same id.
+            "id": ext.get("id") or _stable_id("relationship", dataset_name, rel.name),
             "targetElementId": target_element_id,
         }
         if _emit_name(rel.name, ext):

@@ -19,19 +19,22 @@ from pathlib import Path
 
 import yaml
 from ossie import (
-    OSIDataset,
-    OSIDialect,
-    OSIDialectExpression,
-    OSIDocument,
-    OSIExpression,
-    OSIField,
-    OSIMetric,
-    OSISemanticModel,
+    OssieDataset,
+    OssieDialect,
+    OssieDialectExpression,
+    OssieDocument,
+    OssieExpression,
+    OssieField,
+    OssieMetric,
+    OssieSemanticModel,
 )
 
-from ossie_sigma.converter_issues import ConverterIssueType
-from ossie_sigma.osi_to_sigma import OSIToSigmaConverter, _stable_id
-from ossie_sigma.sigma_to_osi import SigmaToOSIConverter
+import pytest
+from ossie import OssieRelationship
+
+from ossie_sigma.converter_issues import ConverterError, ConverterIssueType
+from ossie_sigma.ossie_to_sigma import OssieToSigmaConverter, _stable_id
+from ossie_sigma.sigma_to_ossie import SigmaToOssieConverter
 
 from .helpers import load_fixture, normalize
 
@@ -40,15 +43,15 @@ EXAMPLES_DIR = Path(__file__).parent.parent.parent.parent / "examples"
 
 def test_roundtrip_fixture_a_is_byte_identical():
     spec = load_fixture("fixtureA_sigma.json")
-    document = SigmaToOSIConverter().convert(spec).output
-    reconstructed = OSIToSigmaConverter().convert(document).output
+    document = SigmaToOssieConverter().convert(spec).output
+    reconstructed = OssieToSigmaConverter().convert(document).output
     assert normalize(reconstructed) == normalize(spec)
 
 
 def test_roundtrip_fixture_b_is_byte_identical():
     spec = load_fixture("fixtureB_sigma.json")
-    document = SigmaToOSIConverter().convert(spec).output
-    reconstructed = OSIToSigmaConverter().convert(document).output
+    document = SigmaToOssieConverter().convert(spec).output
+    reconstructed = OssieToSigmaConverter().convert(document).output
     assert normalize(reconstructed) == normalize(spec)
 
 
@@ -56,10 +59,10 @@ def test_foreign_origin_document_synthesizes_valid_spec():
     """An Ossie document never touched by Sigma (no SIGMA custom_extensions) must
     still convert to a structurally valid Sigma spec, with synthesized ids and
     formulas best-effort translated from ANSI SQL."""
-    document = OSIDocument.model_validate(
+    document = OssieDocument.model_validate(
         yaml.safe_load((EXAMPLES_DIR / "tpcds_semantic_model.yaml").read_text())
     )
-    result = OSIToSigmaConverter().convert(document)
+    result = OssieToSigmaConverter().convert(document)
     spec = result.output
 
     assert spec["kind"] == "data-model"
@@ -82,11 +85,11 @@ def test_foreign_origin_document_synthesizes_valid_spec():
 
 
 def test_ids_are_deterministic_across_repeated_conversions():
-    document = OSIDocument.model_validate(
+    document = OssieDocument.model_validate(
         yaml.safe_load((EXAMPLES_DIR / "tpcds_semantic_model.yaml").read_text())
     )
-    spec_1 = OSIToSigmaConverter().convert(document).output
-    spec_2 = OSIToSigmaConverter().convert(document).output
+    spec_1 = OssieToSigmaConverter().convert(document).output
+    spec_2 = OssieToSigmaConverter().convert(document).output
     assert normalize(spec_1) == normalize(spec_2)
 
 
@@ -100,52 +103,110 @@ def test_synthesized_ids_are_stable_across_processes():
     assert _stable_id("metric", "store_sales", "total_sales") == "9d4cc3056b0c5c698664c4803f12dd72"
 
 
+def test_relationship_ids_are_scoped_by_owning_dataset():
+    """Two unrelated relationships sharing a name, on different table pairs, must not
+    collide onto the same synthesized Sigma relationship id."""
+    document = OssieDocument(
+        semantic_model=[
+            OssieSemanticModel(
+                name="m",
+                datasets=[
+                    OssieDataset(name="orders", source="db.public.orders"),
+                    OssieDataset(name="shipments", source="db.public.shipments"),
+                    OssieDataset(name="customers", source="db.public.customers"),
+                    OssieDataset(name="carriers", source="db.public.carriers"),
+                ],
+                relationships=[
+                    OssieRelationship(
+                        name="Parent", **{"from": "orders"}, to="customers", from_columns=["x"], to_columns=["y"]
+                    ),
+                    OssieRelationship(
+                        name="Parent", **{"from": "shipments"}, to="carriers", from_columns=["x"], to_columns=["y"]
+                    ),
+                ],
+            )
+        ]
+    )
+
+    spec = OssieToSigmaConverter().convert(document).output
+    rel_ids = [
+        rel["id"]
+        for page in spec["pages"]
+        for element in page["elements"]
+        for rel in element.get("relationships", [])
+    ]
+    assert len(rel_ids) == 2
+    assert len(set(rel_ids)) == 2, "relationships with the same name on different dataset pairs must not collide"
+
+
+def test_empty_semantic_model_raises_a_clear_error():
+    document = OssieDocument(semantic_model=[])
+    with pytest.raises(ConverterError):
+        OssieToSigmaConverter().convert(document)
+
+
+def test_model_level_metadata_round_trips_through_ossie_and_back():
+    spec = load_fixture("fixtureA_sigma.json")
+    spec.update(
+        createdAt="2024-01-01T00:00:00Z",
+        createdBy="user-1",
+        updatedAt="2024-02-01T00:00:00Z",
+        updatedBy="user-2",
+        ownerId="user-1",
+        url="https://app.sigmacomputing.com/data-model/11111111",
+    )
+    document = SigmaToOssieConverter().convert(spec).output
+    reconstructed = OssieToSigmaConverter().convert(document).output
+    for key in ("createdAt", "createdBy", "updatedAt", "updatedBy", "ownerId", "url"):
+        assert reconstructed[key] == spec[key]
+
+
 def test_untranslatable_expression_omits_the_column_instead_of_faking_a_formula():
     """`formula` is required on every Sigma column and the data model API validates the
     whole document before applying any of it, so a placeholder would fail the entire
     upload rather than degrade one column."""
-    document = OSIDocument(
+    document = OssieDocument(
         semantic_model=[
-            OSISemanticModel(
+            OssieSemanticModel(
                 name="m",
                 datasets=[
-                    OSIDataset(
+                    OssieDataset(
                         name="orders",
                         source="db.public.orders",
                         fields=[
-                            OSIField(
+                            OssieField(
                                 name="ok",
-                                expression=OSIExpression(
-                                    dialects=[OSIDialectExpression(dialect=OSIDialect.ANSI_SQL, expression="amount")]
+                                expression=OssieExpression(
+                                    dialects=[OssieDialectExpression(dialect=OssieDialect.ANSI_SQL, expression="amount")]
                                 ),
                             ),
-                            OSIField(
+                            OssieField(
                                 name="untranslatable",
-                                expression=OSIExpression(
+                                expression=OssieExpression(
                                     dialects=[
-                                        OSIDialectExpression(
-                                            dialect=OSIDialect.ANSI_SQL,
+                                        OssieDialectExpression(
+                                            dialect=OssieDialect.ANSI_SQL,
                                             expression="SUM(amount) OVER (PARTITION BY region)",
                                         )
                                     ]
                                 ),
                             ),
-                            OSIField(
+                            OssieField(
                                 name="no_usable_dialect",
-                                expression=OSIExpression(
-                                    dialects=[OSIDialectExpression(dialect=OSIDialect.MDX, expression="[Measures].[X]")]
+                                expression=OssieExpression(
+                                    dialects=[OssieDialectExpression(dialect=OssieDialect.MDX, expression="[Measures].[X]")]
                                 ),
                             ),
                         ],
                     )
                 ],
                 metrics=[
-                    OSIMetric(
+                    OssieMetric(
                         name="untranslatable_metric",
-                        expression=OSIExpression(
+                        expression=OssieExpression(
                             dialects=[
-                                OSIDialectExpression(
-                                    dialect=OSIDialect.ANSI_SQL,
+                                OssieDialectExpression(
+                                    dialect=OssieDialect.ANSI_SQL,
                                     expression="SUM(orders.amount) OVER (PARTITION BY orders.region)",
                                 )
                             ]
@@ -156,7 +217,7 @@ def test_untranslatable_expression_omits_the_column_instead_of_faking_a_formula(
         ]
     )
 
-    result = OSIToSigmaConverter().convert(document)
+    result = OssieToSigmaConverter().convert(document)
     element = result.output["pages"][0]["elements"][0]
 
     assert [c["name"] for c in element["columns"]] == ["ok"]
@@ -169,29 +230,29 @@ def test_untranslatable_expression_omits_the_column_instead_of_faking_a_formula(
 
 def test_synthesized_spec_carries_a_schema_version():
     """`schemaVersion` is required by the create/update endpoints."""
-    document = OSIDocument.model_validate(
+    document = OssieDocument.model_validate(
         yaml.safe_load((EXAMPLES_DIR / "tpcds_semantic_model.yaml").read_text())
     )
-    assert OSIToSigmaConverter().convert(document).output["schemaVersion"] == 1
+    assert OssieToSigmaConverter().convert(document).output["schemaVersion"] == 1
 
 
 def test_datatypes_only_ever_emit_the_two_documented_format_kinds():
-    document = OSIDocument(
+    document = OssieDocument(
         semantic_model=[
-            OSISemanticModel(
+            OssieSemanticModel(
                 name="m",
                 datasets=[
-                    OSIDataset(
+                    OssieDataset(
                         name="t",
                         source="db.public.t",
                         fields=[
-                            OSIField(
+                            OssieField(
                                 name=datatype.lower(),
                                 datatype=datatype,
-                                expression=OSIExpression(
+                                expression=OssieExpression(
                                     dialects=[
-                                        OSIDialectExpression(
-                                            dialect=OSIDialect.ANSI_SQL, expression=datatype.lower()
+                                        OssieDialectExpression(
+                                            dialect=OssieDialect.ANSI_SQL, expression=datatype.lower()
                                         )
                                     ]
                                 ),
@@ -214,7 +275,7 @@ def test_datatypes_only_ever_emit_the_two_documented_format_kinds():
         ]
     )
 
-    columns = OSIToSigmaConverter().convert(document).output["pages"][0]["elements"][0]["columns"]
+    columns = OssieToSigmaConverter().convert(document).output["pages"][0]["elements"][0]["columns"]
     kinds = {c["formula"].strip("[]"): c["format"]["kind"] for c in columns if "format" in c}
     assert kinds == {
         "integer": "number",

@@ -34,7 +34,7 @@ tree back into formula text, so both directions share one intermediate represent
 Design principle (matching the rest of the Ossie converter ecosystem): never fail. A
 formula that cannot be parsed, or that uses a function with no portable SQL
 equivalent, is simply not translatable — callers fall back to carrying the original
-Sigma formula text verbatim (see ``ossie_sigma.sigma_to_osi``), rather than raising or
+Sigma formula text verbatim (see ``ossie_sigma.sigma_to_ossie``), rather than raising or
 emitting an approximate/lossy translation.
 """
 
