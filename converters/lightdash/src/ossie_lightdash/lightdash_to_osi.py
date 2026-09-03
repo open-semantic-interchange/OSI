@@ -69,6 +69,32 @@ _JOIN_PAIR_RE = re.compile(
 )
 
 
+def _resolve_meta(node: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the effective ``meta`` block of a dbt model or column node.
+
+    dbt 1.10 moved ``meta`` (and ``tags``) under ``config``, keeping the
+    top-level key as a deprecated alias. Both spellings can appear in the same
+    project, so Lightdash merges them with ``config.meta`` taking precedence
+    (``packages/common/src/compiler/translator.ts``). Reading only the
+    top-level key drops every dimension and metric of a dbt >= 1.10 project
+    without raising anything.
+    """
+    top = node.get("meta") or {}
+    config = (node.get("config") or {}).get("meta") or {}
+    if not config:
+        return top
+    if not top:
+        return config
+    merged = dict(top)
+    for key, value in config.items():
+        existing = merged.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            merged[key] = {**existing, **value}
+        else:
+            merged[key] = value
+    return merged
+
+
 def _ansi(expression: str) -> OSIExpression:
     return OSIExpression(
         dialects=[
@@ -162,7 +188,7 @@ class LightdashToOSIConverter:
             fields.append(field)
             metrics.extend(column_metrics)
 
-        model_meta = model.get("meta") or {}
+        model_meta = _resolve_meta(model)
         for metric_name, definition in (model_meta.get("metrics") or {}).items():
             if not definition.get("sql"):
                 issues.append(
@@ -192,7 +218,7 @@ class LightdashToOSIConverter:
         self, column: Dict[str, Any], *, dataset_name: str
     ) -> Tuple[OSIField, List[OSIMetric]]:
         column_name = column["name"]
-        meta = column.get("meta") or {}
+        meta = _resolve_meta(column)
         dimension_meta = meta.get("dimension")
 
         expression = column_name

@@ -268,3 +268,97 @@ class TestLightdashToOSI:
             issue.issue_type is ConverterIssueType.JOIN_SQL_UNPARSED
             for issue in result.issues
         )
+
+
+class TestDbtConfigMeta:
+    """dbt >= 1.10 nests ``meta`` under ``config``; Lightdash reads both."""
+
+    def test_config_meta_is_read(self):
+        schema_yml = {
+            "models": [
+                {
+                    "name": "orders",
+                    "config": {
+                        "meta": {
+                            "metrics": {
+                                "total_orders": {
+                                    "type": "number",
+                                    "label": "Total orders",
+                                    "sql": "SUM(${TABLE}.amount)",
+                                }
+                            }
+                        }
+                    },
+                    "columns": [
+                        {
+                            "name": "status",
+                            "config": {
+                                "meta": {
+                                    "dimension": {
+                                        "label": "Order status",
+                                        "type": "string",
+                                    }
+                                }
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+        result = LightdashToOSIConverter().convert(schema_yml, schema="marts")
+        model = result.output.semantic_model[0]
+        field = model.datasets[0].fields[0]
+
+        assert [metric.name for metric in model.metrics] == ["total_orders"]
+        assert field.datatype is OSIDataType.STRING
+        assert field.label == "Order status"
+
+    def test_config_meta_takes_precedence_over_top_level_meta(self):
+        schema_yml = {
+            "models": [
+                {
+                    "name": "orders",
+                    "columns": [
+                        {
+                            "name": "status",
+                            "meta": {
+                                "dimension": {"label": "Legacy", "type": "string"}
+                            },
+                            "config": {
+                                "meta": {
+                                    "dimension": {
+                                        "label": "Order status",
+                                        "type": "string",
+                                    }
+                                }
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+        result = LightdashToOSIConverter().convert(schema_yml, schema="marts")
+        field = result.output.semantic_model[0].datasets[0].fields[0]
+
+        assert field.label == "Order status"
+
+    def test_top_level_meta_still_supported(self):
+        schema_yml = {
+            "models": [
+                {
+                    "name": "orders",
+                    "columns": [
+                        {
+                            "name": "status",
+                            "meta": {
+                                "dimension": {"label": "Order status", "type": "string"}
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+        result = LightdashToOSIConverter().convert(schema_yml, schema="marts")
+        field = result.output.semantic_model[0].datasets[0].fields[0]
+
+        assert field.label == "Order status"
