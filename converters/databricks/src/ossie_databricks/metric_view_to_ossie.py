@@ -53,11 +53,8 @@ from ._common import (
 _MODEL_STASH_KEYS = ("filter", "parameters", "materialization")
 _JOIN_STASH_KEYS = ("rely", "cardinality")
 _COLUMN_STASH_KEYS = ("format", "window")
-# Measure-only fields with no native Apache Ossie Metric representation. A dimension's
-# display_name maps to the Apache Ossie field `label`, but the metric shape has no `label`,
-# so a measure's display_name is preserved in the DATABRICKS stash instead (the same
-# mechanism as format/window). Kept separate from _COLUMN_STASH_KEYS so the dimension
-# path -- which already maps display_name to `label` -- does not also stash it.
+# A dimension's display_name maps to the field `label`, but a metric has no `label`, so a
+# measure's display_name is stashed instead.
 _MEASURE_STASH_KEYS = ("display_name",)
 
 

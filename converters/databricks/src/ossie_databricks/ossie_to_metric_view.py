@@ -571,9 +571,6 @@ def _convert_metric(metric, fact, seen_names):
         measure["format"] = stash["format"]
     if "window" in stash:
         measure["window"] = stash["window"]
-    # The Apache Ossie metric shape has no `label`, so a measure's display_name round-trips
-    # through the DATABRICKS stash (see _MEASURE_STASH_KEYS on the import side) rather than a
-    # native field.
     if "display_name" in stash:
         measure["display_name"] = stash["display_name"]
     return measure
