@@ -172,6 +172,15 @@ relationships:
     #   - [order_id, line_number]    # Composite key
     to_columns: []  # Array of column names
 
+    # Optional: Additional context for AI tools (e.g., synonyms, business context)
+    # Helps LLMs understand when and why the datasets should be joined
+    # Either a free-form string, or a structured object:
+    # ai_context:
+    #   instructions: string  # Instructions for AI on how to use this entity
+    #   synonyms: []          # Alternative names and terms
+    #   examples: []          # Sample questions or use cases
+    ai_context: string
+
     # Optional: Vendor-specific attributes for extensibility
     custom_extensions:
       - vendor_name: string  # Free-form string identifying the vendor
