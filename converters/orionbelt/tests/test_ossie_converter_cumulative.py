@@ -239,7 +239,7 @@ class TestOssietoOBMLCumulative:
         ossie = converter1.convert()
         converter2 = conv.OssietoOBML(ossie)
         converter2.convert()
-        # No "skipped" or "unparsable" warnings for cumulative metrics
+        # No "skipped" or "unparseable" warnings for cumulative metrics
         cum_warnings = [
             w for w in converter2.warnings if "Running Revenue" in w or "Rolling" in w or "MTD" in w
         ]
