@@ -21,18 +21,18 @@ from pydantic import ValidationError
 from conftest import _expression
 
 from ossie import (
-    OSIAIContextObject,
-    OSICustomExtension,
-    OSIDataset,
-    OSIDialect,
-    OSIDialectExpression,
-    OSIDimension,
-    OSIDocument,
-    OSIExpression,
-    OSIField,
-    OSIMetric,
-    OSIRelationship,
-    OSISemanticModel,
+    OssieAIContextObject,
+    OssieCustomExtension,
+    OssieDataset,
+    OssieDialect,
+    OssieDialectExpression,
+    OssieDimension,
+    OssieDocument,
+    OssieExpression,
+    OssieField,
+    OssieMetric,
+    OssieRelationship,
+    OssieSemanticModel,
 )
 
 
@@ -43,22 +43,22 @@ from ossie import (
 
 def test_dataset_missing_required() -> None:
     with pytest.raises(ValidationError):
-        OSIDataset()
+        OssieDataset()
 
 
 def test_field_missing_name() -> None:
     with pytest.raises(ValidationError):
-        OSIField(expression=_expression("order_id"))
+        OssieField(expression=_expression("order_id"))
 
 
 def test_field_missing_expression() -> None:
     with pytest.raises(ValidationError):
-        OSIField(name="order_id")
+        OssieField(name="order_id")
 
 
 def test_relationship_missing_name() -> None:
     with pytest.raises(ValidationError):
-        OSIRelationship(
+        OssieRelationship(
             **{"from": "orders"},
             to="customers",
             from_columns=["customer_id"],
@@ -68,7 +68,7 @@ def test_relationship_missing_name() -> None:
 
 def test_relationship_missing_from() -> None:
     with pytest.raises(ValidationError):
-        OSIRelationship(
+        OssieRelationship(
             name="order_customer",
             to="customers",
             from_columns=["customer_id"],
@@ -78,7 +78,7 @@ def test_relationship_missing_from() -> None:
 
 def test_relationship_missing_to() -> None:
     with pytest.raises(ValidationError):
-        OSIRelationship(
+        OssieRelationship(
             name="order_customer",
             **{"from": "orders"},
             from_columns=["customer_id"],
@@ -88,7 +88,7 @@ def test_relationship_missing_to() -> None:
 
 def test_relationship_missing_from_columns() -> None:
     with pytest.raises(ValidationError):
-        OSIRelationship(
+        OssieRelationship(
             name="order_customer",
             **{"from": "orders"},
             to="customers",
@@ -98,7 +98,7 @@ def test_relationship_missing_from_columns() -> None:
 
 def test_relationship_missing_to_columns() -> None:
     with pytest.raises(ValidationError):
-        OSIRelationship(
+        OssieRelationship(
             name="order_customer",
             **{"from": "orders"},
             to="customers",
@@ -108,59 +108,59 @@ def test_relationship_missing_to_columns() -> None:
 
 def test_metric_missing_name() -> None:
     with pytest.raises(ValidationError):
-        OSIMetric(expression=_expression("order_id"))
+        OssieMetric(expression=_expression("order_id"))
 
 
 def test_metric_missing_expression() -> None:
     with pytest.raises(ValidationError):
-        OSIMetric(name="total_sales")
+        OssieMetric(name="total_sales")
 
 
 def test_document_missing_semantic_model() -> None:
     with pytest.raises(ValidationError):
-        OSIDocument()
+        OssieDocument()
 
 
 def test_semantic_model_missing_name() -> None:
     with pytest.raises(ValidationError):
-        OSISemanticModel(
-            datasets=[OSIDataset(name="orders", source="database.schema.orders")]
+        OssieSemanticModel(
+            datasets=[OssieDataset(name="orders", source="database.schema.orders")]
         )
 
 
 def test_semantic_model_missing_datasets() -> None:
     with pytest.raises(ValidationError):
-        OSISemanticModel(name="sales_model")
+        OssieSemanticModel(name="sales_model")
 
 
 def test_custom_extension_missing_vendor_name() -> None:
     with pytest.raises(ValidationError):
-        OSICustomExtension(data="{}")
+        OssieCustomExtension(data="{}")
 
 
 def test_custom_extension_missing_data() -> None:
     with pytest.raises(ValidationError):
-        OSICustomExtension(vendor_name="ASF")
+        OssieCustomExtension(vendor_name="ASF")
 
 
 def test_dialect_expression_missing_dialect() -> None:
     with pytest.raises(ValidationError):
-        OSIDialectExpression(expression="order_id")
+        OssieDialectExpression(expression="order_id")
 
 
 def test_dialect_expression_missing_expression() -> None:
     with pytest.raises(ValidationError):
-        OSIDialectExpression(dialect=OSIDialect.ANSI_SQL)
+        OssieDialectExpression(dialect=OssieDialect.ANSI_SQL)
 
 
 def test_expression_missing_dialects() -> None:
     with pytest.raises(ValidationError):
-        OSIExpression()
+        OssieExpression()
 
 
 def test_invalid_dialect_in_expression() -> None:
     with pytest.raises(ValidationError):
-        OSIDialectExpression(dialect="INVALID", expression="order_id")
+        OssieDialectExpression(dialect="INVALID", expression="order_id")
 
 
 # ---------------------------------------------------------------------------
@@ -169,13 +169,13 @@ def test_invalid_dialect_in_expression() -> None:
 
 
 def test_frozen_dataset() -> None:
-    dataset = OSIDataset(name="orders", source="database.schema.orders")
+    dataset = OssieDataset(name="orders", source="database.schema.orders")
     with pytest.raises(ValidationError):
         dataset.name = "other"
 
 
 def test_frozen_field() -> None:
-    field = OSIField(
+    field = OssieField(
         name="order_id",
         expression=_expression("order_id"),
     )
@@ -184,13 +184,13 @@ def test_frozen_field() -> None:
 
 
 def test_frozen_document(document_data: dict) -> None:
-    document = OSIDocument.model_validate(document_data)
+    document = OssieDocument.model_validate(document_data)
     with pytest.raises(ValidationError):
         document.version = "new.version"
 
 
 def test_frozen_relationship() -> None:
-    relationship = OSIRelationship(
+    relationship = OssieRelationship(
         name="order_customer",
         **{"from": "orders"},
         to="customers",
@@ -202,20 +202,20 @@ def test_frozen_relationship() -> None:
 
 
 def test_frozen_ai_context_object() -> None:
-    ai_ctx = OSIAIContextObject(instructions="Use this field for filtering")
+    ai_ctx = OssieAIContextObject(instructions="Use this field for filtering")
     with pytest.raises(ValidationError):
         ai_ctx.instructions = "Updated instructions"
 
 
 def test_frozen_custom_extension() -> None:
-    custom_ext = OSICustomExtension(vendor_name="ASF", data="{}")
+    custom_ext = OssieCustomExtension(vendor_name="ASF", data="{}")
     with pytest.raises(ValidationError):
         custom_ext.vendor_name = "other"
 
 
 def test_frozen_dialect_expression() -> None:
-    dialect_expr = OSIDialectExpression(
-        dialect=OSIDialect.ANSI_SQL, expression="order_id"
+    dialect_expr = OssieDialectExpression(
+        dialect=OssieDialect.ANSI_SQL, expression="order_id"
     )
     with pytest.raises(ValidationError):
         dialect_expr.expression = "other_column"
@@ -228,22 +228,22 @@ def test_frozen_expression() -> None:
 
 
 def test_frozen_dimension() -> None:
-    dim = OSIDimension(is_time=True)
+    dim = OssieDimension(is_time=True)
     with pytest.raises(ValidationError):
         dim.is_time = False
 
 
 def test_frozen_metric() -> None:
     expr = _expression("order_id")
-    m = OSIMetric(name="total_sales", expression=expr)
+    m = OssieMetric(name="total_sales", expression=expr)
     with pytest.raises(ValidationError):
         m.name = "other"
 
 
 def test_frozen_semantic_model() -> None:
-    semantic_model = OSISemanticModel(
+    semantic_model = OssieSemanticModel(
         name="sales_model",
-        datasets=[OSIDataset(name="orders", source="database.schema.orders")],
+        datasets=[OssieDataset(name="orders", source="database.schema.orders")],
     )
     with pytest.raises(ValidationError):
         semantic_model.name = "other"

@@ -17,15 +17,15 @@
 
 import pytest
 
-from ossie import OSIDialect, OSIExpression
+from ossie import OssieDialect, OssieExpression
 
 
 def _expression_data(value: str = "value") -> dict:
-    return {"dialects": [{"dialect": OSIDialect.ANSI_SQL, "expression": value}]}
+    return {"dialects": [{"dialect": OssieDialect.ANSI_SQL, "expression": value}]}
 
 
-def _expression(value: str = "value") -> OSIExpression:
-    return OSIExpression.model_validate(_expression_data(value))
+def _expression(value: str = "value") -> OssieExpression:
+    return OssieExpression.model_validate(_expression_data(value))
 
 
 @pytest.fixture

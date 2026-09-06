@@ -29,7 +29,7 @@ Apache Polaris is an open-source catalog for Apache Iceberg. This converter comm
 mvn clean package
 ```
 
-Requires Java 17+.
+Requires Java 21+.
 
 ## Usage
 
@@ -95,7 +95,7 @@ Each Ossie semantic model becomes a Polaris namespace, and each dataset becomes 
 |-----|-------------------|
 | `semantic_model` | Namespace |
 | `dataset` | Table |
-| `dataset.source` | Stored in table property `osi.source` |
+| `dataset.source` | Stored in table property `ossie.source` |
 | `dataset.primary_key` | `identifier-field-ids` |
 | `field.datatype` | Schema column type |
 | Untyped `field.dimension.is_time: true` | `timestamptz` fallback type |
@@ -160,7 +160,7 @@ inference is used with a warning.
          └────────┬─────────┘           └─────────┬─────────┘
                   │                               │
          ┌────────┴─────────┐           ┌─────────┴─────────┐
-         │ OsiYamlGenerator │           │  OsiModelParser   │
+         │ OssieYamlGenerator │           │  OssieModelParser   │
          └──────────────────┘           └───────────────────┘
 ```
 

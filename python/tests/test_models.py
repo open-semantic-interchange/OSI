@@ -25,12 +25,19 @@ from pydantic import ValidationError
 from conftest import _expression
 
 from ossie import (
-    OSIAIContextObject,
-    OSIDataType,
-    OSIDimension,
-    OSIDocument,
-    OSIField,
-    OSIRelationship,
+    OssieAIContextObject,
+    OssieCustomExtension,
+    OssieDataset,
+    OssieDataType,
+    OssieDialect,
+    OssieDialectExpression,
+    OssieDimension,
+    OssieDocument,
+    OssieExpression,
+    OssieField,
+    OssieMetric,
+    OssieRelationship,
+    OssieSemanticModel,
 )
 
 
@@ -38,12 +45,18 @@ from ossie import (
 # Data type tests
 # ---------------------------------------------------------------------------
 
+def _expression_data(value: str = "value") -> dict:
+    return {"dialects": [{"dialect": "ANSI_SQL", "expression": value}]}
+
+
+def _expression(value: str = "value") -> OssieExpression:
+    return OssieExpression.model_validate(_expression_data(value))
 
 def test_data_type_enum_matches_core_schema() -> None:
-    schema_path = Path(__file__).parents[2] / "core-spec" / "osi-schema.json"
+    schema_path = Path(__file__).parents[2] / "core-spec" / "ossie-schema.json"
     schema = json.loads(schema_path.read_text())
 
-    assert [member.value for member in OSIDataType] == schema["$defs"]["DataType"][
+    assert [member.value for member in OssieDataType] == schema["$defs"]["DataType"][
         "enum"
     ]
     assert schema["$defs"]["Field"]["properties"]["datatype"] == {
@@ -55,15 +68,14 @@ def test_data_type_enum_matches_core_schema() -> None:
 
 
 def test_field_and_metric_datatypes_survive_serialization(document_data: dict) -> None:
-    document = OSIDocument.model_validate(document_data)
-
+    document = OssieDocument.model_validate(document_data)
     field = document.semantic_model[0].datasets[0].fields[0]
     metric = document.semantic_model[0].metrics[0]
-    assert field.datatype is OSIDataType.DATE_TIME_TZ
-    assert metric.datatype is OSIDataType.DECIMAL
+    assert field.datatype is OssieDataType.DATE_TIME_TZ
+    assert metric.datatype is OssieDataType.DECIMAL
 
-    as_json = json.loads(document.to_osi_json())
-    as_yaml = yaml.safe_load(document.to_osi_yaml())
+    as_json = json.loads(document.to_ossie_json())
+    as_yaml = yaml.safe_load(document.to_ossie_yaml())
     for serialized in (as_json, as_yaml):
         model = serialized["semantic_model"][0]
         assert model["datasets"][0]["fields"][0]["datatype"] == "DateTimeTz"
@@ -75,26 +87,26 @@ def test_invalid_datatype_is_rejected(document_data: dict) -> None:
     field["datatype"] = "timestamp"
 
     with pytest.raises(ValidationError):
-        OSIDocument.model_validate(document_data)
+        OssieDocument.model_validate(document_data)
 
 
 @pytest.mark.parametrize(
     ("dimension", "datatype", "expected"),
     [
-        (None, OSIDataType.DATE, False),
-        (OSIDimension(), OSIDataType.DATE, True),
-        (OSIDimension(is_time=False), OSIDataType.DATE_TIME_TZ, False),
-        (OSIDimension(is_time=True), OSIDataType.STRING, True),
-        (OSIDimension(), OSIDataType.STRING, False),
-        (OSIDimension(), None, False),
+        (None, OssieDataType.DATE, False),
+        (OssieDimension(), OssieDataType.DATE, True),
+        (OssieDimension(is_time=False), OssieDataType.DATE_TIME_TZ, False),
+        (OssieDimension(is_time=True), OssieDataType.STRING, True),
+        (OssieDimension(), OssieDataType.STRING, False),
+        (OssieDimension(), None, False),
     ],
 )
 def test_effective_time_dimension_role(
-    dimension: OSIDimension | None,
-    datatype: OSIDataType | None,
+    dimension: OssieDimension | None,
+    datatype: OssieDataType | None,
     expected: bool,
 ) -> None:
-    field = OSIField(
+    field = OssieField(
         name="value",
         expression=_expression(),
         dimension=dimension,
@@ -110,13 +122,13 @@ def test_effective_time_dimension_role(
 
 
 def test_ai_context_object_allows_extra() -> None:
-    ai_ctx = OSIAIContextObject(custom_field="custom_value")
+    ai_ctx = OssieAIContextObject(custom_field="custom_value")
     assert ai_ctx.custom_field == "custom_value"
 
 
 def test_ai_context_accepts_string(document_data: dict) -> None:
     document_data["semantic_model"][0]["ai_context"] = "Plain text context"
-    document = OSIDocument.model_validate(document_data)
+    document = OssieDocument.model_validate(document_data)
     assert document.semantic_model[0].ai_context == "Plain text context"
 
 
@@ -124,14 +136,14 @@ def test_ai_context_accepts_object(document_data: dict) -> None:
     document_data["semantic_model"][0]["ai_context"] = {
         "instructions": "Use this model for analytics"
     }
-    document = OSIDocument.model_validate(document_data)
+    document = OssieDocument.model_validate(document_data)
     ai_ctx = document.semantic_model[0].ai_context
-    assert isinstance(ai_ctx, OSIAIContextObject)
+    assert isinstance(ai_ctx, OssieAIContextObject)
     assert ai_ctx.instructions == "Use this model for analytics"
 
 
 def test_relationship_with_alias() -> None:
-    relationship = OSIRelationship(
+    relationship = OssieRelationship(
         name="order_customer",
         **{"from": "orders"},
         to="customers",
@@ -143,7 +155,7 @@ def test_relationship_with_alias() -> None:
 
 
 def test_relationship_with_python_name() -> None:
-    relationship = OSIRelationship(
+    relationship = OssieRelationship(
         name="order_customer",
         from_dataset="orders",
         to="customers",
