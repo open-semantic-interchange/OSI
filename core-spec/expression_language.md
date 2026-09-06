@@ -36,7 +36,7 @@ There are two layers in Ossie that need an expression language:
 * **Ontology layer.**  This layer maps onto the ontology layer which sits above the logical layer.  It maps more closely to modelling languages like OWL, [(Py)Rel](https://docs.relational.ai) from RelationalAI, and [Legend](https://legend.finos.org) from Goldman Sachs  
 * **Logical layer.**  This layer maps directly to the databases and physical layer.  It maps closely to traditional BI semantic models.
 
-This proposal is only targeted at the Logical Layer.  It would be nice if the Ontological layer could re-use the same expression language, but that will be treated as a separate proposal.
+This proposal is only targeted at the Logical Layer.  It would be nice if the Ontological layer could reuse the same expression language, but that will be treated as a separate proposal.
 
 This document defines the SQL expression language subset that Ossie-compliant implementations MUST support. The goal is to provide a portable expression language that works across all Ossie implementations while allowing vendors to expose richer database-specific functionality through dialect extensions.  In particular, it is meant for expressions at the logical layer.  This means metrics, fields, filters, etc  In the future, expressions such as arbitrary join expressions should also use this expression language.
 
@@ -80,7 +80,7 @@ The quote character for the Ossie dialect will follow ANSI SQL and support the d
 
 #### Comparison Table
 
-| You type this in SQL | Equivalen to | Will it match a column created as id?             |
+| You type this in SQL | Equivalent to | Will it match a column created as id?             |
 | :---- |:-------------|:--------------------------------------------------|
 | id | ID           | **Yes** (Standard behavior)                       |
 | Id | ID           | **Yes** (Standard behavior)                       |
