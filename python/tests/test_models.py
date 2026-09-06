@@ -16,28 +16,21 @@
 # under the License.
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 import yaml
 from pydantic import ValidationError
 
-from conftest import _expression
-
 from ossie import (
     OssieAIContextObject,
-    OssieCustomExtension,
-    OssieDataset,
     OssieDataType,
-    OssieDialect,
-    OssieDialectExpression,
     OssieDimension,
     OssieDocument,
     OssieExpression,
     OssieField,
-    OssieMetric,
     OssieRelationship,
-    OssieSemanticModel,
 )
 
 
@@ -45,12 +38,6 @@ from ossie import (
 # Data type tests
 # ---------------------------------------------------------------------------
 
-def _expression_data(value: str = "value") -> dict:
-    return {"dialects": [{"dialect": "ANSI_SQL", "expression": value}]}
-
-
-def _expression(value: str = "value") -> OssieExpression:
-    return OssieExpression.model_validate(_expression_data(value))
 
 def test_data_type_enum_matches_core_schema() -> None:
     schema_path = Path(__file__).parents[2] / "core-spec" / "ossie-schema.json"
@@ -102,13 +89,14 @@ def test_invalid_datatype_is_rejected(document_data: dict) -> None:
     ],
 )
 def test_effective_time_dimension_role(
+    make_expression: Callable[[str], OssieExpression],
     dimension: OssieDimension | None,
     datatype: OssieDataType | None,
     expected: bool,
 ) -> None:
     field = OssieField(
         name="value",
-        expression=_expression(),
+        expression=make_expression(),
         dimension=dimension,
         datatype=datatype,
     )

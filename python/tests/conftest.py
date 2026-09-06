@@ -15,6 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
+from collections.abc import Callable
+
 import pytest
 
 from ossie import OssieDialect, OssieExpression
@@ -24,8 +26,12 @@ def _expression_data(value: str = "value") -> dict:
     return {"dialects": [{"dialect": OssieDialect.ANSI_SQL, "expression": value}]}
 
 
-def _expression(value: str = "value") -> OssieExpression:
-    return OssieExpression.model_validate(_expression_data(value))
+@pytest.fixture
+def make_expression() -> Callable[[str], OssieExpression]:
+    def _factory(value: str = "value") -> OssieExpression:
+        return OssieExpression.model_validate(_expression_data(value))
+
+    return _factory
 
 
 @pytest.fixture

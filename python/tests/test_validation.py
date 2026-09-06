@@ -15,10 +15,10 @@
 # specific language governing permissions and limitations
 # under the License.
 
+from collections.abc import Callable
+
 import pytest
 from pydantic import ValidationError
-
-from conftest import _expression
 
 from ossie import (
     OssieAIContextObject,
@@ -46,9 +46,9 @@ def test_dataset_missing_required() -> None:
         OssieDataset()
 
 
-def test_field_missing_name() -> None:
+def test_field_missing_name(make_expression: Callable[[str], OssieExpression]) -> None:
     with pytest.raises(ValidationError):
-        OssieField(expression=_expression("order_id"))
+        OssieField(expression=make_expression("order_id"))
 
 
 def test_field_missing_expression() -> None:
@@ -106,9 +106,9 @@ def test_relationship_missing_to_columns() -> None:
         )
 
 
-def test_metric_missing_name() -> None:
+def test_metric_missing_name(make_expression: Callable[[str], OssieExpression]) -> None:
     with pytest.raises(ValidationError):
-        OssieMetric(expression=_expression("order_id"))
+        OssieMetric(expression=make_expression("order_id"))
 
 
 def test_metric_missing_expression() -> None:
@@ -174,10 +174,10 @@ def test_frozen_dataset() -> None:
         dataset.name = "other"
 
 
-def test_frozen_field() -> None:
+def test_frozen_field(make_expression: Callable[[str], OssieExpression]) -> None:
     field = OssieField(
         name="order_id",
-        expression=_expression("order_id"),
+        expression=make_expression("order_id"),
     )
     with pytest.raises(ValidationError):
         field.name = "other"
@@ -221,8 +221,8 @@ def test_frozen_dialect_expression() -> None:
         dialect_expr.expression = "other_column"
 
 
-def test_frozen_expression() -> None:
-    expr = _expression("order_id")
+def test_frozen_expression(make_expression: Callable[[str], OssieExpression]) -> None:
+    expr = make_expression("order_id")
     with pytest.raises(ValidationError):
         expr.dialects = []
 
@@ -233,8 +233,8 @@ def test_frozen_dimension() -> None:
         dim.is_time = False
 
 
-def test_frozen_metric() -> None:
-    expr = _expression("order_id")
+def test_frozen_metric(make_expression: Callable[[str], OssieExpression]) -> None:
+    expr = make_expression("order_id")
     m = OssieMetric(name="total_sales", expression=expr)
     with pytest.raises(ValidationError):
         m.name = "other"
