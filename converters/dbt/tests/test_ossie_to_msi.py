@@ -23,12 +23,23 @@ from syrupy.assertion import SnapshotAssertion
 from ossie import OssieDataType, OssieDimension
 from ossie_dbt.msi_to_ossie import MSIToOssieConverter
 from ossie_dbt.ossie_to_msi import OssieToMSIConverter
+from metricflow_semantic_interfaces.implementations.elements.measure import (
+    PydanticMeasureAggregationParameters,
+)
+from metricflow_semantic_interfaces.implementations.metric import (
+    PydanticMetric,
+    PydanticMetricAggregationParams,
+    PydanticMetricTypeParams,
+)
+from metricflow_semantic_interfaces.test_utils import default_meta, semantic_model_with_guaranteed_meta
 from metricflow_semantic_interfaces.type_enums import (
     AggregationType,
     DimensionType,
     MetricType,
 )
 from tests.helpers import (
+    _manifest,
+    _measure,
     _ossie_dataset,
     _ossie_doc,
     _ossie_field,
@@ -445,3 +456,46 @@ class TestOssieToMSIRoundTrip:
         assert metrics[0].name == "revenue"
         assert metrics[0].expression.dialects[0].expression == "SUM(orders.amount)"
         assert ossie_doc.to_ossie_yaml() == snapshot
+
+    def test_discrete_percentile_survives_round_trip(self) -> None:
+        """A PERCENTILE_DISC metric keeps use_discrete_percentile through MSI -> Ossie -> MSI."""
+        orders = semantic_model_with_guaranteed_meta(
+            name="orders",
+            measures=[_measure("amount", agg=AggregationType.SUM, expr="amount")],
+        )
+        metric = PydanticMetric(
+            name="p95_amount",
+            description=None,
+            type=MetricType.SIMPLE,
+            type_params=PydanticMetricTypeParams(
+                expr="amount",
+                metric_aggregation_params=PydanticMetricAggregationParams(
+                    semantic_model="orders",
+                    agg=AggregationType.PERCENTILE,
+                    agg_params=PydanticMeasureAggregationParameters(
+                        percentile=0.95,
+                        use_discrete_percentile=True,
+                    ),
+                    agg_time_dimension=None,
+                    non_additive_dimension=None,
+                ),
+            ),
+            filter=None,
+            metadata=default_meta(),
+            config=None,
+        )
+
+        ossie_doc = MSIToOssieConverter().convert(
+            _manifest(semantic_models=[orders], metrics=[metric])
+        ).output
+
+        ossie_expr = ossie_doc.semantic_model[0].metrics[0].expression.dialects[0].expression
+        assert ossie_expr == "PERCENTILE_DISC(0.95) WITHIN GROUP (ORDER BY orders.amount)"
+
+        back = OssieToMSIConverter().convert(ossie_doc).output
+        m = back.metrics[0]
+
+        assert m.type_params.metric_aggregation_params is not None
+        assert m.type_params.metric_aggregation_params.agg == AggregationType.PERCENTILE
+        assert m.type_params.metric_aggregation_params.agg_params is not None
+        assert m.type_params.metric_aggregation_params.agg_params.use_discrete_percentile is True

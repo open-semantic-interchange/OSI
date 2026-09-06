@@ -282,9 +282,16 @@ class OssieToMSIConverter:
         # --- SIMPLE: single aggregation ---
         agg_result = _extract_agg_info(expr_str)
         if agg_result is not None:
-            agg, col, percentile = agg_result
+            agg, col, percentile, use_discrete = agg_result
             semantic_model_name = self._find_dataset_for_col(expr_str, col, datasets)
-            agg_params = PydanticMeasureAggregationParameters(percentile=percentile) if percentile is not None else None
+            agg_params = (
+                PydanticMeasureAggregationParameters(
+                    percentile=percentile,
+                    use_discrete_percentile=use_discrete,
+                )
+                if percentile is not None
+                else None
+            )
             return [
                 PydanticMetric(
                     name=name,
