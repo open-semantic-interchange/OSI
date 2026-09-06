@@ -75,6 +75,7 @@ The Ossie specification currently defines extensions for the following vendors:
 | `DATABRICKS` | Databricks semantic layer |
 | `OMNI` | Omni semantic model |
 | `WISDOM` | WisdomAI domain |
+| `NVIDIA_GSF` | NVIDIA Generative Semantic Fabric standalone YAML |
 
 Each vendor may define custom extensions (via the `custom_extensions` field in the Ossie spec) to carry vendor-specific metadata that does not have an equivalent in the core specification.
 
@@ -228,7 +229,7 @@ A converter should map `ai_context` when the target vendor supports equivalent c
 
 ### Step-by-Step Guide
 
-1. **Validate input**: Use the [Ossie JSON Schema](../core-spec/osi-schema.json) and the [validation script](../validation/validate.py) to ensure the source Ossie model is valid before conversion.
+1. **Validate input**: Use the [Ossie JSON Schema](../core-spec/ossie-schema.json) and the [validation script](../validation/validate.py) to ensure the source Ossie model is valid before conversion.
 
 2. **Parse the Ossie model**: Load the YAML file and iterate over the top-level `semantic_model` entries.
 

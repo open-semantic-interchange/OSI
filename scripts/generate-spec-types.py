@@ -16,7 +16,7 @@
 # under the License.
 
 """
-Generate enums for spec.yaml from osi-schema.json.
+Generate enums for spec.yaml from ossie-schema.json.
 
 Usage:
   python3 scripts/generate-spec-types.py --check    # exit 1 if spec.yaml is out of sync
@@ -36,7 +36,7 @@ except ImportError:
     sys.exit(1)
 
 REPO = Path(__file__).resolve().parent.parent
-SCHEMA = REPO / "core-spec" / "osi-schema.json"
+SCHEMA = REPO / "core-spec" / "ossie-schema.json"
 SPEC = REPO / "core-spec" / "spec.yaml"
 
 SECTIONS = [
@@ -53,6 +53,7 @@ SECTIONS = [
             "DATABRICKS": "Databricks SQL",
             "MAQL": "GoodData MAQL (Multi-Dimensional Analytical Query Language)",
             "BIGQUERY": "Google BigQuery GoogleSQL",
+            "THOUGHTSPOT": "ThoughtSpot formula language (not SQL)",
         },
     },
     {
@@ -93,7 +94,7 @@ def _generate_block(section: dict, values: list[str]) -> str:
 
     lines = [
         section["header"],
-        "# Auto-generated from osi-schema.json ({}).".format(ref),
+        "# Auto-generated from ossie-schema.json ({}).".format(ref),
         "{}:".format(key),
     ]
     for v in values:
