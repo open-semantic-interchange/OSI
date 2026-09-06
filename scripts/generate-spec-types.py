@@ -1,3 +1,12 @@
+ #!/usr/bin/env python3
+ #
+ # /// script
+ # requires-python = ">=3.11"
+ # dependencies = [
+ #     "pyyaml>=6.0.3",
+ # ]
+ # ///
+
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -32,7 +41,8 @@ from pathlib import Path
 try:
     import yaml
 except ImportError:
-    print("Missing dependency. Install with: pip install PyYAML")
+    print("Missing dependency. Install with:", file=sys.stderr)
+    print("  python3 -m pip install pyyaml", file=sys.stderr)
     sys.exit(1)
 
 REPO = Path(__file__).resolve().parent.parent
@@ -79,7 +89,7 @@ SECTIONS = [
 
 def _schema_values(section: dict) -> list[str]:
     path = section["schema_path"]
-    with open(SCHEMA) as f:
+    with SCHEMA.open(encoding="utf-8") as f:
         data = json.load(f)
     for part in path:
         data = data[part]
