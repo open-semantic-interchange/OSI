@@ -268,7 +268,7 @@ Enterprise adoption requires consistent identifiers, validation, and governance 
 
 **Related Issues:**
 
-- [Issue #102 — Add semantic versioning and Git releases for core-spec/osi-schema.json](https://github.com/apache/ossie/issues/102)
+- [Issue #102 — Add semantic versioning and Git releases for core-spec/ossie-schema.json](https://github.com/apache/ossie/issues/102)
 - [Issue #92 — Community Implementation: Trust Control Center — Ossie-compatible governance & reconciliation platform](https://github.com/apache/ossie/issues/92)
 - [Issue #87 — New Flags: Restricted and Internal only indicators](https://github.com/apache/ossie/issues/87)
 
@@ -388,7 +388,7 @@ New adopters and tool authors need clearer documentation, real-world samples, an
 
 - [Core Specification (spec.md)](core-spec/spec.md) — the current Ossie spec document
 - [TPC-DS Example Model](examples/tpcds_semantic_model.yaml) — reference semantic model using the TPC-DS benchmark
-- [Converter Guide (converters/index.md)](converters/index.md) — hub-and-spoke converter architecture and authoring guide
+- [Converter Guide (converters/README.md)](converters/README.md) — hub-and-spoke converter architecture and authoring guide
 
 ---
 
@@ -428,15 +428,15 @@ Broad ecosystem adoption depends on practical tools that let teams validate thei
 
 **Existing Artifacts:**
 
-- [JSON Schema (osi-schema.json)](core-spec/osi-schema.json) — schema for structural validation
+- [JSON Schema (ossie-schema.json)](core-spec/ossie-schema.json) — schema for structural validation
 - [Validation Script (validate.py)](validation/validate.py) — validates Ossie YAML against JSON Schema, unique names, references, and SQL syntax
 - [Snowflake Converter](converters/snowflake/) — Ossie → Snowflake Cortex Analyst YAML converter
 - [GoodData Converter](converters/gooddata/) — bidirectional Ossie ↔ GoodData LDM converter
 - [Salesforce Converter](converters/salesforce/) — Ossie ↔ Salesforce converter
 - [Apache Polaris Converter](converters/polaris/) — Ossie → Apache Polaris converter
+- [OrionBelt Converter](converters/orionbelt/) — bidirectional Ossie ↔ OrionBelt OBML converter
 
 **Related Issues:**
 
 - [Issue #121 — Create converter/common module (for Java binding)](https://github.com/apache/ossie/issues/121)
 - [Issue #111 — Follow up on Ossie ai_context and custom_extensions mapping in Snowflake YAML](https://github.com/apache/ossie/issues/111)
-

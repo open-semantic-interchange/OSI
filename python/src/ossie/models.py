@@ -22,7 +22,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class OSIDialect(str, Enum):
+class OssieDialect(str, Enum):
     """Supported SQL and expression language dialects."""
 
     ANSI_SQL = "ANSI_SQL"
@@ -32,10 +32,36 @@ class OSIDialect(str, Enum):
     TABLEAU = "TABLEAU"
     DATABRICKS = "DATABRICKS"
     BIGQUERY = "BIGQUERY"
+    THOUGHTSPOT = "THOUGHTSPOT"
 
 
-class OSIVendor(str, Enum):
-    """Vendors with supported custom extensions."""
+class OssieDataType(str, Enum):
+    """Portable logical data types for fields and metric results."""
+
+    STRING = "String"
+    INTEGER = "Integer"
+    DECIMAL = "Decimal"
+    FLOAT = "Float"
+    BOOLEAN = "Boolean"
+    DATE = "Date"
+    TIME = "Time"
+    DATE_TIME = "DateTime"
+    DATE_TIME_TZ = "DateTimeTz"
+    OPAQUE = "Opaque"
+
+
+_TEMPORAL_DATA_TYPES = frozenset(
+    {
+        OssieDataType.DATE,
+        OssieDataType.TIME,
+        OssieDataType.DATE_TIME,
+        OssieDataType.DATE_TIME_TZ,
+    }
+)
+
+
+class OssieVendor(str, Enum):
+    """Well-known vendor names for custom extensions."""
 
     COMMON = "COMMON"
     SNOWFLAKE = "SNOWFLAKE"
@@ -43,9 +69,11 @@ class OSIVendor(str, Enum):
     DBT = "DBT"
     DATABRICKS = "DATABRICKS"
     GOODDATA = "GOODDATA"
+    SEMANTIDO = "SEMANTIDO"
+    WISDOM = "WISDOM"
 
 
-class OSIAIContextObject(BaseModel):
+class OssieAIContextObject(BaseModel):
     """Structured AI context with instructions, synonyms, and examples."""
 
     model_config = ConfigDict(frozen=True, extra="allow")
@@ -55,36 +83,36 @@ class OSIAIContextObject(BaseModel):
     examples: Optional[tuple[str, ...]] = None
 
 
-OSIAIContext = Union[str, OSIAIContextObject]
+OssieAIContext = Union[str, OssieAIContextObject]
 
 
-class OSICustomExtension(BaseModel):
+class OssieCustomExtension(BaseModel):
     """Vendor-specific metadata as a serialized JSON string."""
 
     model_config = ConfigDict(frozen=True)
 
-    vendor_name: OSIVendor
+    vendor_name: str
     data: str
 
 
-class OSIDialectExpression(BaseModel):
+class OssieDialectExpression(BaseModel):
     """Expression in a specific dialect."""
 
     model_config = ConfigDict(frozen=True)
 
-    dialect: OSIDialect
+    dialect: OssieDialect
     expression: str
 
 
-class OSIExpression(BaseModel):
+class OssieExpression(BaseModel):
     """Expression definition with multi-dialect support."""
 
     model_config = ConfigDict(frozen=True)
 
-    dialects: list[OSIDialectExpression] = Field(..., min_length=1)
+    dialects: list[OssieDialectExpression] = Field(..., min_length=1)
 
 
-class OSIDimension(BaseModel):
+class OssieDimension(BaseModel):
     """Dimension metadata on a field."""
 
     model_config = ConfigDict(frozen=True)
@@ -92,21 +120,35 @@ class OSIDimension(BaseModel):
     is_time: Optional[bool] = None
 
 
-class OSIField(BaseModel):
+class OssieField(BaseModel):
     """Row-level attribute for grouping, filtering, and metric expressions."""
 
     model_config = ConfigDict(frozen=True)
 
     name: str
-    expression: OSIExpression
-    dimension: Optional[OSIDimension] = None
+    expression: OssieExpression
+    dimension: Optional[OssieDimension] = None
     label: Optional[str] = None
     description: Optional[str] = None
-    ai_context: Optional[OSIAIContext] = None
-    custom_extensions: Optional[list[OSICustomExtension]] = None
+    datatype: Optional[OssieDataType] = None
+    ai_context: Optional[OssieAIContext] = None
+    custom_extensions: Optional[list[OssieCustomExtension]] = None
+
+    def is_time_dimension(self) -> bool:
+        """Return the field's effective temporal-dimension role.
+
+        A field must have dimension metadata to be a dimension. Within that
+        block, an explicit ``is_time`` value takes precedence; otherwise the
+        role defaults from a temporal ``datatype``.
+        """
+        if self.dimension is None:
+            return False
+        if self.dimension.is_time is not None:
+            return self.dimension.is_time
+        return self.datatype in _TEMPORAL_DATA_TYPES
 
 
-class OSIDataset(BaseModel):
+class OssieDataset(BaseModel):
     """Logical dataset representing a business entity (fact or dimension table)."""
 
     model_config = ConfigDict(frozen=True)
@@ -116,12 +158,12 @@ class OSIDataset(BaseModel):
     primary_key: Optional[list[str]] = None
     unique_keys: Optional[list[list[str]]] = None
     description: Optional[str] = None
-    ai_context: Optional[OSIAIContext] = None
-    fields: Optional[list[OSIField]] = None
-    custom_extensions: Optional[list[OSICustomExtension]] = None
+    ai_context: Optional[OssieAIContext] = None
+    fields: Optional[list[OssieField]] = None
+    custom_extensions: Optional[list[OssieCustomExtension]] = None
 
 
-class OSIRelationship(BaseModel):
+class OssieRelationship(BaseModel):
     """Foreign key relationship between datasets."""
 
     model_config = ConfigDict(frozen=True, populate_by_name=True)
@@ -131,51 +173,53 @@ class OSIRelationship(BaseModel):
     to: str
     from_columns: list[str] = Field(..., min_length=1)
     to_columns: list[str] = Field(..., min_length=1)
-    ai_context: Optional[OSIAIContext] = None
-    custom_extensions: Optional[list[OSICustomExtension]] = None
+    ai_context: Optional[OssieAIContext] = None
+    custom_extensions: Optional[list[OssieCustomExtension]] = None
 
 
-class OSIMetric(BaseModel):
+class OssieMetric(BaseModel):
     """Quantitative measure defined on business data."""
 
     model_config = ConfigDict(frozen=True)
 
     name: str
-    expression: OSIExpression
+    expression: OssieExpression
     description: Optional[str] = None
-    ai_context: Optional[OSIAIContext] = None
-    custom_extensions: Optional[list[OSICustomExtension]] = None
+    datatype: Optional[OssieDataType] = None
+    ai_context: Optional[OssieAIContext] = None
+    custom_extensions: Optional[list[OssieCustomExtension]] = None
 
 
-class OSISemanticModel(BaseModel):
+class OssieSemanticModel(BaseModel):
     """Top-level container representing a complete semantic model."""
 
     model_config = ConfigDict(frozen=True)
 
     name: str
     description: Optional[str] = None
-    ai_context: Optional[OSIAIContext] = None
-    datasets: list[OSIDataset] = Field(..., min_length=1)
-    relationships: Optional[list[OSIRelationship]] = None
-    metrics: Optional[list[OSIMetric]] = None
-    custom_extensions: Optional[list[OSICustomExtension]] = None
+    ai_context: Optional[OssieAIContext] = None
+    datasets: list[OssieDataset] = Field(..., min_length=1)
+    relationships: Optional[list[OssieRelationship]] = None
+    metrics: Optional[list[OssieMetric]] = None
+    custom_extensions: Optional[list[OssieCustomExtension]] = None
 
 
-class OSIDocument(BaseModel):
+
+class OssieDocument(BaseModel):
     """Root Ossie document."""
 
     model_config = ConfigDict(frozen=True)
 
     version: str = "0.2.0.dev0"
-    dialects: Optional[list[OSIDialect]] = None
-    vendors: Optional[list[OSIVendor]] = None
-    semantic_model: list[OSISemanticModel]
+    dialects: Optional[list[OssieDialect]] = None
+    vendors: Optional[list[OssieVendor]] = None
+    semantic_model: list[OssieSemanticModel]
 
-    def to_osi_yaml(self, **kwargs: Any) -> str:
+    def to_ossie_yaml(self, **kwargs: Any) -> str:
         """Serialize to Ossie-compliant YAML (uses field aliases and excludes None values)."""
         data = self.model_dump(by_alias=True, exclude_none=True, mode="json", **kwargs)
         return yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
-    def to_osi_json(self, **kwargs: Any) -> str:
+    def to_ossie_json(self, **kwargs: Any) -> str:
         """Serialize to Ossie-compliant JSON (uses field aliases and excludes None values)."""
         return self.model_dump_json(by_alias=True, exclude_none=True, **kwargs)

@@ -67,13 +67,13 @@ For the full specification, see [core-spec/spec.md](../core-spec/spec.md). For v
 
 Ossie is supported by a broad coalition of 50+ organizations across the data ecosystem, including:
 
-Alation, Anomalo, Atlan, AtScale, Bigeye, BlackRock, Blue Yonder, Carto, Cloudera, Coalesce, Collate, Collibra, Cogniti, Count, Credible, Cube, Databricks, DataHub, Denodo, dbt Labs, Dremio, Domo, Elementum AI, Firebolt, GoodData, Hex, Honeydew, Informatica, Instacart, JetBrains, Lightdash, Mistral AI, Omni, Oracle, Preset, Qlik, RelationalAI, Salesforce, Select Star, Sigma, Snowflake, Starburst Data, Strategy, Sundial, ThoughtSpot, and more.
+Alation, Anomalo, Atlan, AtScale, Bigeye, BlackRock, Blue Yonder, Carto, Cloudera, Coalesce, Collate, Collibra, Cogniti, Count, Credible, Cube, Databricks, DataHub, Denodo, dbt Labs, Dremio, Domo, Elementum AI, Firebolt, GoodData, Hex, Honeydew, Informatica, Instacart, JetBrains, Lightdash, Mistral AI, Omni, Oracle, Preset, Qlik, RelationalAI, Salesforce, Select Star, Sigma, Snowflake, Solid, Starburst Data, Strategy, Sundial, ThoughtSpot, and more.
 
 ### Converters
 
 Ossie converters follow a **hub-and-spoke** architecture: the Ossie core specification acts as the central, vendor-neutral format, and each converter handles translation to or from a specific vendor format (e.g., Snowflake, dbt, Salesforce, Databricks). This avoids the need for point-to-point converters between every pair of vendors.
 
-For details on implementing a converter, see the [Converters Guide](../converters/index.md).
+For details on implementing a converter, see the [Converters Guide](../converters/README.md).
 
 ---
 
@@ -188,7 +188,7 @@ A typical Ossie-based workflow looks like this:
 
 1. **Author**: A semantic model is authored in one tool (e.g., dbt) or directly in the Ossie YAML format.
 2. **Import**: If authored in a vendor tool, the vendor's import converter translates it into an Ossie model, preserving vendor-specific metadata in `custom_extensions`.
-3. **Validate**: The Ossie model is validated against the [JSON Schema](../core-spec/osi-schema.json) and the [validation script](../validation/validate.py) to ensure correctness.
+3. **Validate**: The Ossie model is validated against the [JSON Schema](../core-spec/ossie-schema.json) and the [validation script](../validation/validate.py) to ensure correctness.
 4. **Exchange**: The Ossie model is shared — via Git, a data catalog, or a sync API — with other teams and tools.
 5. **Export**: Each consuming tool's export converter translates the Ossie model into its native format, selecting the appropriate SQL dialect and applying vendor-specific extensions.
 6. **Round-Trip**: When changes are made in a downstream tool, they can be imported back into the Ossie model, preserving all metadata for lossless round-tripping.
@@ -228,16 +228,16 @@ No. Ossie is vendor-agnostic by design. The specification is developed and gover
 ### Adoption
 
 **Can I use Ossie with my existing BI tool?**
-Yes, as long as a converter exists (or is built) for your tool. The hub-and-spoke model means that adding Ossie support to a single tool gives it interoperability with every other Ossie-compatible tool. Check the [Converters Guide](../converters/index.md) for currently supported vendors.
+Yes, as long as a converter exists (or is built) for your tool. The hub-and-spoke model means that adding Ossie support to a single tool gives it interoperability with every other Ossie-compatible tool. Check the [Converters Guide](../converters/README.md) for currently supported vendors.
 
 **What if my vendor isn't supported yet?**
-You can contribute a converter. The [Converters Guide](../converters/index.md) provides a step-by-step guide for implementing import and export converters for new vendors. The community is happy to help with design reviews and testing.
+You can contribute a converter. The [Converters Guide](../converters/README.md) provides a step-by-step guide for implementing import and export converters for new vendors. The community is happy to help with design reviews and testing.
 
 **Do I need to rewrite my existing semantic models?**
 No. Import converters translate existing vendor-specific models into the Ossie format automatically. Your existing models remain intact — Ossie provides an additional interchange layer on top of them.
 
 **How do I validate an Ossie model?**
-Use the [validation script](../validation/validate.py) included in the repository. It checks your model against the [JSON Schema](../core-spec/osi-schema.json), validates SQL expressions across dialects, and ensures referential integrity between datasets and relationships.
+Use the [validation script](../validation/validate.py) included in the repository. It checks your model against the [JSON Schema](../core-spec/ossie-schema.json), validates SQL expressions across dialects, and ensures referential integrity between datasets and relationships.
 
 ### Technical
 
@@ -287,7 +287,7 @@ A practical guide for organizations looking to adopt Ossie.
 
 - **Inventory your semantic layer**: Identify which tools in your organization define semantic models — BI platforms, data modeling tools, AI/ML pipelines, metrics stores.
 - **Map your pain points**: Determine where semantic fragmentation causes the most friction — conflicting metric definitions, manual reconciliation, onboarding new tools.
-- **Check converter availability**: Review the [Converters Guide](../converters/index.md) to see if converters exist for your tools. If not, assess the effort to build one.
+- **Check converter availability**: Review the [Converters Guide](../converters/README.md) to see if converters exist for your tools. If not, assess the effort to build one.
 
 ### Phase 2: Pilot
 
@@ -316,7 +316,7 @@ A practical guide for organizations looking to adopt Ossie.
 |------|------------|
 | **Semantic Model** | A structured description of business data that defines datasets, fields, relationships, and metrics. It provides a shared vocabulary for interpreting data across tools and teams. |
 | **Dataset** | A logical representation of a business entity, typically corresponding to a fact table or dimension table in a data warehouse. |
-| **Field** | A row-level attribute within a dataset, used for grouping, filtering, or as part of metric expressions. Fields can be simple column references or computed expressions. |
+| **Field** | A row-level attribute within a dataset, used for grouping, filtering, or as part of metric expressions. Fields can be simple column references or computed expressions. A field's logical data type is declared by the optional top-level `datatype` field (one of `String`, `Integer`, `Decimal`, `Float`, `Boolean`, `Date`, `Time`, `DateTime`, `DateTimeTz`, or `Opaque`). |
 | **Dimension** | A categorical attribute used to slice and filter data (e.g., region, product category, date). In Ossie, dimensions are represented as fields with optional metadata such as `is_time`. |
 | **Metric** | A quantitative measure computed by aggregating data across one or more datasets (e.g., total revenue, average order value). Metrics are defined at the semantic model level. |
 | **Relationship** | A foreign key connection between two datasets, defining how they can be joined. Relationships are always many-to-one (from the referencing dataset to the referenced dataset). |
@@ -338,11 +338,11 @@ A practical guide for organizations looking to adopt Ossie.
 - **GitHub**: [github.com/apache/ossie](https://github.com/apache/ossie)
 - **Slack**: [join slack](https://join.slack.com/t/opensemanticx/shared_invite/zt-3yuad6c0h-MaoPgVSD1g9MEOf1_QeaiQ)
 - **Core Specification**: [core-spec/spec.md](../core-spec/spec.md)
-- **JSON Schema**: [core-spec/osi-schema.json](../core-spec/osi-schema.json)
+- **JSON Schema**: [core-spec/ossie-schema.json](../core-spec/ossie-schema.json)
 - **YAML Schema**: [core-spec/spec.yaml](../core-spec/spec.yaml)
 - **TPC-DS Example Model**: [examples/tpcds_semantic_model.yaml](../examples/tpcds_semantic_model.yaml)
 - **Validation Script**: [validation/validate.py](../validation/validate.py)
-- **Converters Guide**: [converters/index.md](../converters/index.md)
+- **Converters Guide**: [converters/README.md](../converters/README.md)
 
 ---
 

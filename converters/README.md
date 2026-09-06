@@ -73,6 +73,9 @@ The Ossie specification currently defines extensions for the following vendors:
 | `SALESFORCE` | Salesforce / Tableau semantic layer |
 | `DBT` | dbt semantic models |
 | `DATABRICKS` | Databricks semantic layer |
+| `OMNI` | Omni semantic model |
+| `WISDOM` | WisdomAI domain |
+| `NVIDIA_GSF` | NVIDIA Generative Semantic Fabric standalone YAML |
 
 Each vendor may define custom extensions (via the `custom_extensions` field in the Ossie spec) to carry vendor-specific metadata that does not have an equivalent in the core specification.
 
@@ -112,11 +115,17 @@ Datasets represent logical tables (fact or dimension tables). They contain field
 
 Fields represent row-level attributes. They can be simple column references or computed expressions.
 
+> **Note:** `datatype` (on `Field` and `Metric`) declares a field's logical data type; `dimension.is_time` is an independent temporal-role marker.
+> A field may carry both, either, or neither. Use `datatype` for data-type questions (casting, serialization); use `is_time` for role questions
+> (classifying time dimensions). When `is_time` is unset it defaults to `true` if `datatype` is one of `Date`, `Time`, `DateTime`, `DateTimeTz`,
+> and `false` otherwise. Explicit `is_time` always wins.
+
 | Ossie Field | Description | Converter Consideration |
 |-----------|-------------|------------------------|
 | `name` | Field identifier | Map to column/attribute name |
 | `expression.dialects` | Multi-dialect SQL expressions | Select the dialect matching the target vendor; fall back to `ANSI_SQL` |
-| `dimension.is_time` | Whether the field is a time dimension | Map to vendor-specific time dimension markers |
+| `datatype` | Logical data type of the field (one of `String`, `Integer`, `Decimal`, `Float`, `Boolean`, `Date`, `Time`, `DateTime`, `DateTimeTz`, `Opaque`). | Converters SHOULD consult `datatype` for the field's logical data type. `Decimal` is exact base-10 with unspecified precision and scale; `Float` is approximate. Prefer the temporal members (`Date`, `Time`, `DateTime`, `DateTimeTz`) to classify time dimensions. Omit `datatype` when unknown; use `Opaque` + `custom_extensions` for a known type outside the portable vocabulary. |
+| `dimension.is_time` | Temporal-role marker. When `true`, the field should be treated as a time dimension regardless of its `datatype` (e.g. an `Integer` year grain, a `String` month name, or a `Date` column). When unset, defaults to `true` for temporal `datatype`s (`Date`, `Time`, `DateTime`, `DateTimeTz`) and `false` otherwise. | Map to vendor-specific time dimension markers. Converters SHOULD classify as a time dimension when `is_time` resolves to `true` (either explicit or defaulted from a temporal `datatype`). An explicit `is_time: false` suppresses the time-dimension classification even on temporal-typed columns. |
 | `label` | Categorization label | Map if vendor supports field labels/tags |
 | `description` | Human-readable description | Most vendors support field descriptions |
 | `ai_context` | Synonyms and business context | Map if vendor supports semantic annotations |
@@ -163,6 +172,7 @@ Metrics are aggregate measures defined at the semantic model level. They can spa
 |-----------|-------------|------------------------|
 | `name` | Metric identifier | Map to vendor's measure/KPI name |
 | `expression.dialects` | Multi-dialect aggregate expressions | Select the appropriate dialect; fall back to `ANSI_SQL` |
+| `datatype` | Logical data type of the metric result (one of `String`, `Integer`, `Decimal`, `Float`, `Boolean`, `Date`, `Time`, `DateTime`, `DateTimeTz`, `Opaque`). | Converters SHOULD consult `datatype` to declare the result type of the aggregation. Numeric measures should distinguish exact `Decimal` or `Integer` results from approximate `Float` results. Omit `datatype` when unknown; use `Opaque` + `custom_extensions` for a known type outside the portable vocabulary. |
 | `description` | What the metric measures | Most vendors support descriptions |
 | `ai_context` | Synonyms and business context | Map if vendor supports semantic annotations |
 
@@ -219,7 +229,7 @@ A converter should map `ai_context` when the target vendor supports equivalent c
 
 ### Step-by-Step Guide
 
-1. **Validate input**: Use the [Ossie JSON Schema](../core-spec/osi-schema.json) and the [validation script](../validation/validate.py) to ensure the source Ossie model is valid before conversion.
+1. **Validate input**: Use the [Ossie JSON Schema](../core-spec/ossie-schema.json) and the [validation script](../validation/validate.py) to ensure the source Ossie model is valid before conversion.
 
 2. **Parse the Ossie model**: Load the YAML file and iterate over the top-level `semantic_model` entries.
 
@@ -281,7 +291,7 @@ Given the [TPC-DS example](../examples/tpcds_semantic_model.yaml) included in th
 
 To add support for a new vendor:
 
-1. Add the vendor to the `vendors` enum in the [core specification](../core-spec/spec.md) if not already present.
+1. Use a stable `vendor_name` string in each custom extension emitted by the converter.
 2. Define the custom extension schema for the vendor (what vendor-specific metadata fields are supported in the `data` JSON).
 3. Implement the export converter (Ossie → Vendor).
 4. Implement the import converter (Vendor → Ossie).

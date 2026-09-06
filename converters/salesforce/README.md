@@ -21,11 +21,13 @@
 
 A two-way converter between [Ossie semantic models](../../core-spec/spec.md) and [Salesforce Semantic Model](https://developer.salesforce.com/docs/data/semantic-layer/guide/salesforce-semantic-model-schema.html).
 
-This converter provides lossless, bidirectional conversion between Ossie YAML format and Salesforce Semantic Model JSON format.
+This converter supports conversion in both directions between Ossie YAML and
+Salesforce Semantic Model JSON. Unmapped Salesforce properties are preserved in
+`custom_extensions`; see the mapping reference for direction-specific limits.
 
 ## Requirements
 
-- **Java 17+**
+- **Java 21+**
 - **Maven 3.6+** — required to build the jar
 
 ## Building
@@ -50,9 +52,9 @@ Both schemas must be obtained and placed under `src/main/resources/schemas/` bef
 
 ### Apache Ossie Schema
 
-1. Visit the [Ossie schema on GitHub](https://github.com/apache/ossie/blob/main/core-spec/osi-schema.json)
+1. Visit the [Ossie schema on GitHub](https://github.com/apache/ossie/blob/main/core-spec/ossie-schema.json)
 2. Copy the raw JSON contents
-3. Save it to `src/main/resources/schemas/osi-schema.json`
+3. Save it to `src/main/resources/schemas/ossie-schema.json`
 
 ## Usage
 
@@ -63,15 +65,15 @@ Both schemas must be obtained and placed under `src/main/resources/schemas/` bef
 Convert a Salesforce Semantic Model JSON file to Ossie YAML format:
 
 ```bash
-java -jar target/ossie-salesforce-converter-0.1.0-SNAPSHOT.jar toOSI input.json
+java -jar target/ossie-salesforce-converter-0.1.0-SNAPSHOT.jar toOssie input.json
 # Output: Customer_Orders_Model.yaml (named after model's 'name' field)
 # Created in the same directory as the input file
 ```
 
 Example:
 ```bash
-java -jar target/ossie-salesforce-converter-0.1.0-SNAPSHOT.jar toOSI \
-  src/test/resources/examples/salesforceToOsi.json
+java -jar target/ossie-salesforce-converter-0.1.0-SNAPSHOT.jar toOssie \
+  src/test/resources/examples/salesforceToOssie.json
 # Output: src/test/resources/examples/Customer_Orders_Model.yaml
 ```
 
@@ -88,7 +90,7 @@ java -jar target/ossie-salesforce-converter-0.1.0-SNAPSHOT.jar toSF input.yaml
 Example:
 ```bash
 java -jar target/ossie-salesforce-converter-0.1.0-SNAPSHOT.jar toSF \
-  src/test/resources/examples/osiToSalesforce.yaml
+  src/test/resources/examples/ossieToSalesforce.yaml
 # Output: src/test/resources/examples/Customer_Orders_Model.json
 ```
 
@@ -101,12 +103,12 @@ import org.apache.ossie.converter.Converter;
 import org.apache.ossie.converter.ConverterFactory;
 import org.apache.ossie.converter.ConversionDirection;
 
-Converter sfToOsi = ConverterFactory.getConverter(ConversionDirection.SALESFORCE_TO_OSI);
-List<String> osiYamlList = sfToOsi.convert(salesforceJsonString);
-String osiYaml = osiYamlList.get(0);
+Converter sfToOssie = ConverterFactory.getConverter(ConversionDirection.SALESFORCE_TO_OSSIE);
+List<String> ossieYamlList = sfToOssie.convert(salesforceJsonString);
+String ossieYaml = ossieYamlList.get(0);
 
-Converter osiToSf = ConverterFactory.getConverter(ConversionDirection.OSI_TO_SALESFORCE);
-List<String> salesforceJsonList = osiToSf.convert(osiYamlString);
+Converter ossieToSf = ConverterFactory.getConverter(ConversionDirection.OSSIE_TO_SALESFORCE);
+List<String> salesforceJsonList = ossieToSf.convert(ossieYamlString);
 ```
 
 #### File Conversion
@@ -118,18 +120,18 @@ import org.apache.ossie.converter.ConversionDirection;
 
 import java.nio.file.Paths;
 
-Converter sfToOsi = ConverterFactory.getConverter(ConversionDirection.SALESFORCE_TO_OSI);
-sfToOsi.convert(Paths.get("input/model.json"), Paths.get("output/"));
+Converter sfToOssie = ConverterFactory.getConverter(ConversionDirection.SALESFORCE_TO_OSSIE);
+sfToOssie.convert(Paths.get("input/model.json"), Paths.get("output/"));
 
-Converter osiToSf = ConverterFactory.getConverter(ConversionDirection.OSI_TO_SALESFORCE);
-osiToSf.convert(Paths.get("input/model.yaml"), Paths.get("output/"));
+Converter ossieToSf = ConverterFactory.getConverter(ConversionDirection.OSSIE_TO_SALESFORCE);
+ossieToSf.convert(Paths.get("input/model.yaml"), Paths.get("output/"));
 ```
 
 ### Features
 
 - **Schema-validated** - Input is validated against JSON Schema before processing
 - **Lossless conversion** - Unmapped properties are preserved in `custom_extensions`
-- **Bidirectional** - Full bi-directional conversion without data loss
+- **Bidirectional** - Supports both directions, with direction-specific limits documented below
 - **Supports Ossie Specification v0.2.0.dev0**
 
 ## Mapping Reference
@@ -144,6 +146,7 @@ osiToSf.convert(Paths.get("input/model.yaml"), Paths.get("output/"));
 | `semanticDataObjects[].dataObjectName` | `datasets[].source` |
 | `semanticDimensions[]` + `semanticMeasurements[]` | `fields[]` |
 | `dataObjectFieldName` | `expression.dialects[].expression` |
+| Field `dataType` | Field `datatype` |
 | `semanticRelationships[]` | `relationships[]` |
 | `criteria[]` | `from_columns` + `to_columns` |
 | `semanticCalculatedMeasurements[]` | `metrics[]` |
@@ -159,21 +162,68 @@ osiToSf.convert(Paths.get("input/model.yaml"), Paths.get("output/"));
 | `datasets[]` | `semanticDataObjects[]` |
 | `datasets[].name` | `semanticDataObjects[].apiName` |
 | `datasets[].source` | `semanticDataObjects[].dataObjectName` |
-| `fields[]` | Split into `semanticDimensions[]` and `semanticMeasurements[]` based on `expression` analysis |
+| Direct `fields[]` | Split into `semanticDimensions[]` and `semanticMeasurements[]` based on `dimension` presence |
+| Calculated Tableau fields | `semanticCalculatedDimensions[]` through the existing expression-analysis path |
 | `expression.dialects[].expression` | `dataObjectFieldName` |
+| Field `datatype` | Field `dataType` when a safe mapping exists |
 | `relationships[]` | `semanticRelationships[]` |
 | `from_columns` + `to_columns` | `criteria[]` |
-| `metrics[]` | `semanticCalculatedMeasurements[]` |
+| `metrics[]` | Not currently exported |
 | `ai_context` | `businessPreferences` |
 | `custom_extensions` (vendor: `SALESFORCE`) | Restored properties |
 
-### Type Detection (Export)
+### Data Types
 
-Fields are automatically classified as dimensions or measurements based on expression analysis:
+Salesforce imports map field and calculated-measurement types to Ossie's portable
+logical `datatype` vocabulary:
 
-- **Measurements** — expressions containing SQL aggregation functions (`SUM`, `COUNT`, `AVG`, etc.)
-- **Dimensions** — all other fields
-- **Time dimensions** — Date/DateTime types set `dimension.is_time: true`
+| Salesforce `dataType` | Ossie `datatype` |
+|-----------------------|------------------|
+| `Text`, `Email`, `PhoneNumber`, `Url` | `String` |
+| `Number`, `Currency`, `Percentage` | `Decimal` |
+| `Boolean` | `Boolean` |
+| `Date` | `Date` |
+| `DateTime` | `DateTimeTz` |
+| `Geo` or another known vendor type | `Opaque` |
+
+`Number` remains `Decimal` even when `decimalPlace` is zero because
+`decimalPlace` is display metadata, not an integral-value constraint. Missing
+Salesforce types remain unspecified. Exact Salesforce types are also retained in
+the `SALESFORCE` custom extension so distinctions such as `Email` versus `Text`
+and `Currency` versus `Number` round-trip losslessly.
+
+Ossie field export uses these portable defaults when no exact Salesforce extension
+type exists:
+
+| Ossie `datatype` | Salesforce `dataType` |
+|------------------|-----------------------|
+| `String` | `Text` |
+| `Integer`, `Decimal`, `Float` | `Number` |
+| `Boolean` | `Boolean` |
+| `Date` | `Date` |
+| `DateTime`, `DateTimeTz` | `DateTime` |
+| `Time`, `Opaque` | Omitted with a warning unless an exact extension type exists |
+
+Salesforce has one `DateTime` type, so exporting timezone-free Ossie `DateTime`
+loses its distinction from `DateTimeTz`; the converter logs a warning because a
+subsequent Salesforce import interprets that value as `DateTimeTz`.
+
+An exact Salesforce extension value takes precedence over the portable mapping.
+If it conflicts with `datatype`, the converter preserves the exact Salesforce
+value and logs a warning.
+
+### Field Role and Time Dimensions
+
+`datatype` does not determine whether an Ossie field is a dimension or a fact.
+For direct fields, the presence of the `dimension` object determines whether the
+field is exported to `semanticDimensions` or `semanticMeasurements`. A calculated
+Tableau expression follows the converter's existing calculated-dimension path.
+
+On import, Salesforce `Date` and `DateTime` dimensions set `dimension.is_time` to
+`true`; other dimension types set it to `false`. On export, `dimension.is_time`
+does not invent or override a scalar type. This preserves Ossie's separation of
+logical data type from temporal role, including integer year and string month
+dimensions.
 
 ### Relationship Handling
 
@@ -183,7 +233,7 @@ Fields are automatically classified as dimensions or measurements based on expre
 
 ```
                     ┌───────────────────────┐
-                    │ OsiSalesforceConverter│
+                    │ OssieSalesforceConverter│
                     │      (CLI App)        │
                     └───────────┬───────────┘
                             │
@@ -220,7 +270,7 @@ Fields are automatically classified as dimensions or measurements based on expre
 
 **ConverterFactory** — Creates converter instances for specified direction
 
-**Pipeline Configuration** — Handlers and direction-specific settings defined in `osi-salesforce-converter-config.yaml`
+**Pipeline Configuration** — Handlers and direction-specific settings defined in `ossie-salesforce-converter-config.yaml`
 
 **GenericMappingEngine** — Path-based property mapping using `mappings.yaml` configuration
 
@@ -231,9 +281,9 @@ Fields are automatically classified as dimensions or measurements based on expre
 ## Examples
 
 See the test suite for sample models demonstrating various features:
-- `src/test/resources/examples/osiToSalesforce.yaml` - Ossie model example
-- `src/test/java/org/apache/ossie/OsiToSalesforceConverterTest.java` - Ossie to Salesforce conversion tests
-- `src/test/java/org/apache/ossie/SalesforceToOsiConverterTest.java` - Salesforce to Ossie conversion tests
+- `src/test/resources/examples/ossieToSalesforce.yaml` - Ossie model example
+- `src/test/java/org/apache/ossie/OssieToSalesforceConverterTest.java` - Ossie to Salesforce conversion tests
+- `src/test/java/org/apache/ossie/SalesforceToOssieConverterTest.java` - Salesforce to Ossie conversion tests
 
 ## License
 

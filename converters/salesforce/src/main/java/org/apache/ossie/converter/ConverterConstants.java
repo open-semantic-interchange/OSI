@@ -39,7 +39,7 @@ public final class ConverterConstants {
 
     // Ossie root structure
     public static final String VERSION = "version";
-    public static final String OSI_VERSION = "0.2.0.dev0";
+    public static final String OSSIE_VERSION = "0.2.0.dev0";
     public static final String SEMANTIC_MODEL = "semantic_model";
 
     // Ossie semantic model structure
@@ -65,6 +65,7 @@ public final class ConverterConstants {
     public static final String LABEL = "label";
     public static final String DESCRIPTION = "description";
     public static final String DATA_TYPE = "dataType";
+    public static final String OSSIE_DATATYPE = "datatype";
     public static final String AI_CONTEXT = "ai_context";
     public static final String BUSINESS_PREFERENCES = "businessPreferences";
 
@@ -107,10 +108,6 @@ public final class ConverterConstants {
     public static final String FIELD_TYPE_TABLE_FIELD = "TableField";
     public static final String FIELD_TYPE_SEMANTIC_FIELD = "SemanticField";
     public static final String FIELD_TYPE_FORMULA = "Formula";
-
-    // Data type values
-    public static final String DATA_TYPE_DATE = "Date";
-    public static final String DATA_TYPE_DATE_TIME = "DateTime";
 
     // Default values settings
     public static final String CARDINALITY = "cardinality";
