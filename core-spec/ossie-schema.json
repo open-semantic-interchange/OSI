@@ -10,11 +10,22 @@
       "const": "0.2.0.dev0",
       "description": "Apache Ossie specification version"
     },
+    "ai_context": {
+      "$ref": "#/$defs/AIContext",
+      "description": "Document-wide context for AI tools. Applies to every semantic model in this document; model-level ai_context adds to it and takes precedence where the two conflict."
+    },
     "semantic_model": {
       "type": "array",
       "description": "Collection of semantic model definitions",
       "items": {
         "$ref": "#/$defs/SemanticModel"
+      }
+    },
+    "custom_extensions": {
+      "type": "array",
+      "description": "Document-wide vendor-specific attributes for extensibility",
+      "items": {
+        "$ref": "#/$defs/CustomExtension"
       }
     }
   },

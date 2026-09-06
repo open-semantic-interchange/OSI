@@ -32,12 +32,13 @@
 ## Table of Contents
 
 1. [Enumerations](#enumerations)
-2. [Semantic Model](#semantic-model)
-3. [Datasets](#datasets)
-4. [Relationships](#relationships)
-5. [Fields](#fields)
-6. [Metrics](#metrics)
-7. [Examples](#examples)
+2. [Document](#document)
+3. [Semantic Model](#semantic-model)
+4. [Datasets](#datasets)
+5. [Relationships](#relationships)
+6. [Fields](#fields)
+7. [Metrics](#metrics)
+8. [Examples](#examples)
 
 ---
 
@@ -79,6 +80,66 @@ ontology specification's built-in value types; `Time`, `DateTimeTz`, and
 | `DateTime` | Local/civil date and time with no timezone or offset. |
 | `DateTimeTz` | Date and time with sufficient offset or timezone context to identify an instant. Preservation of a named timezone identifier is not guaranteed. |
 | `Opaque` | Known type outside the portable vocabulary; use `custom_extensions` for vendor-specific refinement. Omit `datatype` when the type is unknown or unspecified. |
+
+## Document
+
+The root object of an Ossie file. A document carries a specification `version` and one or
+more semantic models.
+
+### Schema
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `version` | string | Yes | Apache Ossie specification version |
+| `ai_context` | string/object | No | Document-wide context for AI tools |
+| `semantic_model` | array | Yes | Collection of semantic model definitions |
+| `custom_extensions` | array | No | Document-wide vendor-specific attributes for extensibility |
+
+### Document-wide `ai_context`
+
+A document may hold several semantic models — for example one per data source, where each
+model is queried in its own dialect. Guidance that governs all of them (domain conventions,
+a shared glossary, rules the publisher considers mandatory) belongs to the document, not to
+any one model. Without a document-level slot, a producer has to copy that guidance into
+every model so that no model can be read without it, and a consumer has no way to tell the
+copies apart from genuinely model-specific instruction.
+
+`ai_context` at the root states it once:
+
+```yaml
+version: 0.2.0.dev0
+ai_context:
+  instructions: "Fiscal year starts in July. Never join across the finance and telemetry models."
+  synonyms: ["revenue = net_sales"]
+semantic_model:
+  - name: finance
+    ai_context:
+      instructions: "Amounts are in USD."
+    datasets:
+      - name: gl_entries
+        source: finance.public.gl_entries
+  - name: telemetry
+    datasets:
+      - name: events
+        source: telemetry.public.events
+```
+
+Document-level context applies to every model in the document. Model-level `ai_context` adds
+to it rather than replacing it, and takes precedence where the two conflict — so `finance`
+above is read as "fiscal year starts in July" *and* "amounts are in USD". The root slot
+carries no instruction that is specific to one model; that is what the model-level slot is
+for.
+
+Consumers that do not understand document-level context still parse the document, and models
+remain independently readable — but a consumer that ignores it will miss guidance the
+publisher considered mandatory, exactly as it would by ignoring model-level `ai_context`.
+
+An ontology document already works this way: `ontology/ontology.json` carries `ai_context` on
+its root and resolves it against this specification's `AIContext` definition, so document-wide
+context is an established shape in Ossie rather than a new one. Core documents were the only
+root without it.
+
+---
 
 ## Semantic Model
 
