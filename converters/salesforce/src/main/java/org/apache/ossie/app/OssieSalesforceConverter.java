@@ -40,7 +40,7 @@ public class OssieSalesforceConverter {
     public static void main(String[] args) {
         if (args.length < 2) {
             System.err.println("Usage: ossie-salesforce-converter <direction> <input-file>");
-            System.err.println("  direction: toSF | toOSI");
+            System.err.println("  direction: toSF | toOssie");
             System.exit(1);
         }
 
